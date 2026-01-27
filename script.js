@@ -1,5 +1,5 @@
-/* * Booktoki Downloader (V16: Box-Sizing Fix)
- * 입력창이 박스를 뚫고 나가는 문제를 'box-sizing: border-box'로 완벽 해결
+/* * Booktoki Downloader (V17: Input Width Force Fix)
+ * 입력창 너비를 80px로 강제 고정하여 레이아웃 이탈 원천 봉쇄
  */
 
 (function () {
@@ -54,23 +54,28 @@
   const ui = document.createElement('div');
   ui.id = 'my-downloader-ui';
 
-  // 메인 박스 스타일: box-sizing 적용 및 너비 380px로 살짝 확보
+  // 메인 박스 스타일 (너비 360px)
   ui.style.cssText = `
-        position: fixed; top: 20px; right: 20px; width: 380px;
+        position: fixed; top: 20px; right: 20px; width: 360px;
         background: #111; color: #fff; padding: 20px;
         z-index: 2147483647; border-radius: 10px; font-family: sans-serif;
         box-shadow: 0 0 20px rgba(0,0,0,1); border: 2px solid #555;
         font-size: 14px; line-height: 1.5; text-align: left;
-        box-sizing: border-box !important; /* 패딩 포함 크기 계산 */
+        box-sizing: border-box !important;
     `;
 
   ui.innerHTML = `
         <style>
-            /* 모든 요소에 box-sizing 강제 적용 (가출 방지 핵심) */
+            /* 모든 요소 초기화 */
             #my-downloader-ui * {
                 box-sizing: border-box !important;
             }
+            /* 입력창 스타일: 너비 80px 강제, 높이 35px 고정 */
             #my-downloader-ui input[type="number"] {
+                width: 80px !important; /* [핵심] 무조건 80px */
+                min-width: 80px !important;
+                max-width: 80px !important;
+                height: 35px !important;
                 background-color: #ffffff !important;
                 color: #000000 !important;
                 border: 2px solid #999 !important;
@@ -79,15 +84,20 @@
                 font-weight: bold !important;
                 text-align: center !important;
                 font-size: 16px !important;
-                height: 40px !important;
                 margin: 0 !important;
+                display: inline-block !important;
                 -webkit-text-fill-color: #000000 !important;
                 opacity: 1 !important;
-                display: block !important;
+            }
+            /* 페이지 수 입력창만 예외적으로 100% (위쪽 큰 거) */
+            #my-downloader-ui #total-pages {
+                width: 100% !important;
+                max-width: 100% !important;
             }
             #my-downloader-ui label, #my-downloader-ui span {
                 color: #ffffff !important;
                 font-weight: normal;
+                display: inline-block;
             }
             #my-downloader-ui button {
                 cursor: pointer;
@@ -95,14 +105,14 @@
         </style>
 
         <div style="border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between;">
-            <h3 style="margin:0; color:#00E676;">✅ V16: 가출 방지 완료</h3>
+            <h3 style="margin:0; color:#00E676;">✅ V17: 너비 80px 고정</h3>
             <button id="btn-close" style="background:none; border:none; color:#fff; cursor:pointer; font-size:16px;">✕</button>
         </div>
 
         <div id="step-setup">
             <div style="margin-bottom:15px;">
                 <label style="display:block; margin-bottom:5px;">총 페이지 수 (맨 아래 숫자):</label>
-                <input type="number" id="total-pages" value="1" style="width:100% !important;">
+                <input type="number" id="total-pages" value="1">
             </div>
             <button id="btn-scan" style="width:100%; padding:12px; background:#00E676; color:#000; border:none; border-radius:4px; font-weight:bold; font-size:15px;">
                 목차 가져오기
@@ -116,16 +126,16 @@
 
             <div style="margin-bottom:15px;">
                 <label style="display:block; margin-bottom:5px;">다운로드 구간 (시작 ~ 끝):</label>
-                <div style="display:flex; gap:10px; align-items:center; width: 100%;">
-                    <input type="number" id="range-start" value="1" style="width: 45% !important;">
+                <div style="display:flex !important; flex-direction: row !important; align-items:center !important; gap:10px !important;">
+                    <input type="number" id="range-start" value="1">
                     <span>~</span>
-                    <input type="number" id="range-end" value="1" style="width: 45% !important;">
+                    <input type="number" id="range-end" value="1">
                 </div>
             </div>
             
              <div style="margin-bottom:20px;">
                 <label style="display:block; margin-bottom:5px;">속도 (초):</label>
-                <input type="number" id="dl-speed" value="1.0" step="0.5" style="width: 100% !important;">
+                <input type="number" id="dl-speed" value="1.0" step="0.5">
             </div>
 
             <div style="display:flex; gap:5px;">
