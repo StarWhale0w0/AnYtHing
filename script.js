@@ -1,36 +1,23 @@
-/* * Booktoki Downloader (V20: Filename Debug)
- * 파일명 생성 로직 강화 및 로그 출력
+/* * Booktoki Downloader (V23: CAPTCHA vs 403 Separation)
+ * 1. 캡차 감지 시: 자동 일시정지 -> 사용자가 풀고 [재개] 누르면 해당 화부터 다시 시도
+ * 2. 403 감지 시: 즉시 루프 종료 -> 현재까지 다운로드한 분량으로 파일명 생성 및 저장 유도
  */
 
 (function () {
   const existingUI = document.getElementById('my-downloader-ui');
   if (existingUI) existingUI.remove();
 
-  // 1. 소설 제목 추출 (여러 방법 시도)
+  // 소설 제목 추출
   const getNovelTitle = () => {
     try {
-      // 방법 A: 메타 태그
       const meta = document.querySelector('meta[property="og:title"]');
       if (meta) return meta.content.replace(' | 북토키', '').trim();
-
-      // 방법 B: 헤더 제목
       const header = document.querySelector(
         '.view-tit, .tit_subject, .board-title',
       );
       if (header) return header.innerText.trim();
-
-      // 방법 C: Reference 코드 방식 (XPath 대응)
-      const xpathEl = document.evaluate(
-        '//*[@id="content_wrapper"]//span',
-        document,
-        null,
-        XPathResult.FIRST_ORDERED_NODE_TYPE,
-        null,
-      ).singleNodeValue;
-      if (xpathEl && xpathEl.textContent.length > 2)
-        return xpathEl.textContent.trim();
     } catch (e) {}
-    return 'Booktoki_Novel'; // 실패 시 기본값
+    return 'Booktoki_Novel';
   };
 
   const unescapeHTML = (text) => {
@@ -40,14 +27,7 @@
       '&amp;': '&',
       '&quot;': '"',
       '&apos;': "'",
-      '&#039;': "'",
       '&nbsp;': ' ',
-      '&ndash;': '–',
-      '&mdash;': '—',
-      '&lsquo;': '‘',
-      '&rsquo;': '’',
-      '&ldquo;': '“',
-      '&rdquo;': '”',
     };
     return text.replace(
       /&[a-z0-9#]+;/g,
@@ -56,13 +36,14 @@
   };
 
   const cleanText = (text) => {
-    text = text.replace(/<div>/g, '\n');
-    text = text.replace(/<\/div>/g, '\n');
-    text = text.replace(/<p>/g, '\n');
-    text = text.replace(/<\/p>/g, '\n');
-    text = text.replace(/<br\s*[/]?>/g, '\n');
-    text = text.replace(/<[^>]*>/g, '');
-    text = text.replace(/ {2,}/g, ' ');
+    text = text
+      .replace(/<div>/g, '\n')
+      .replace(/<\/div>/g, '\n')
+      .replace(/<p>/g, '\n')
+      .replace(/<\/p>/g, '\n')
+      .replace(/<br\s*[/]?>/g, '\n')
+      .replace(/<[^>]*>/g, '')
+      .replace(/ {2,}/g, ' ');
     text = unescapeHTML(text);
     return text
       .split('\n')
@@ -76,11 +57,11 @@
     allLinks: [],
     downloadedText: [],
     novelTitle: getNovelTitle(),
+    realEndIndex: 0,
   };
 
   const ui = document.createElement('div');
   ui.id = 'my-downloader-ui';
-
   ui.style.cssText = `
         position: fixed; top: 20px; right: 20px; width: 360px;
         background: #111; color: #fff; padding: 20px;
@@ -94,33 +75,29 @@
         <style>
             #my-downloader-ui * { box-sizing: border-box !important; }
             #my-downloader-ui input[type="number"] {
-                width: 80px !important; min-width: 80px !important; max-width: 80px !important;
-                height: 35px !important;
+                width: 80px !important; height: 35px !important;
                 background-color: #ffffff !important; color: #000000 !important;
                 border: 2px solid #999 !important; border-radius: 4px !important;
-                padding: 5px !important; font-weight: bold !important;
                 text-align: center !important; font-size: 16px !important;
-                margin: 0 !important; display: inline-block !important;
-                -webkit-text-fill-color: #000000 !important; opacity: 1 !important;
+                font-weight: bold !important; display: inline-block !important;
             }
-            #my-downloader-ui #total-pages { width: 100% !important; max-width: 100% !important; }
-            #my-downloader-ui label, #my-downloader-ui span { color: #ffffff !important; font-weight: normal; display: inline-block; }
+            #my-downloader-ui #total-pages { width: 100% !important; }
             #my-downloader-ui button { cursor: pointer; }
         </style>
 
         <div style="border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between;">
             <div style="width: 85%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">
-                <h3 style="margin:0; color:#00E676; font-size:14px;">📘 ${state.novelTitle}</h3>
+                <h3 style="margin:0; color:#00E676; font-size:14px;">🤖 V23: 지능형 예외처리</h3>
             </div>
-            <button id="btn-close" style="background:none; border:none; color:#fff; cursor:pointer; font-size:16px;">✕</button>
+            <button id="btn-close" style="background:none; border:none; color:#fff; cursor:pointer;">✕</button>
         </div>
 
         <div id="step-setup">
             <div style="margin-bottom:15px;">
-                <label style="display:block; margin-bottom:5px;">총 페이지 수 (맨 아래 숫자):</label>
+                <label style="display:block; margin-bottom:5px;">총 페이지 수:</label>
                 <input type="number" id="total-pages" value="1">
             </div>
-            <button id="btn-scan" style="width:100%; padding:12px; background:#00E676; color:#000; border:none; border-radius:4px; font-weight:bold; font-size:15px;">목차 가져오기</button>
+            <button id="btn-scan" style="width:100%; padding:12px; background:#00E676; color:#000; border:none; border-radius:4px; font-weight:bold;">목차 가져오기</button>
         </div>
 
         <div id="step-download" style="display:none;">
@@ -128,19 +105,17 @@
                 발견: <span id="found-count" style="color:#00E676; font-weight:bold;">0</span> 화
             </div>
             <div style="margin-bottom:15px;">
-                <label style="display:block; margin-bottom:5px;">다운로드 구간 (시작 ~ 끝):</label>
-                <div style="display:flex !important; flex-direction: row !important; align-items:center !important; gap:10px !important;">
-                    <input type="number" id="range-start" value="1">
-                    <span>~</span>
-                    <input type="number" id="range-end" value="1">
+                <label style="display:block; margin-bottom:5px;">구간 (시작 ~ 끝):</label>
+                <div style="display:flex; gap:10px; align-items:center;">
+                    <input type="number" id="range-start" value="1"> <span>~</span> <input type="number" id="range-end" value="1">
                 </div>
             </div>
              <div style="margin-bottom:20px;">
-                <label style="display:block; margin-bottom:5px;">속도 (초):</label>
-                <input type="number" id="dl-speed" value="1.0" step="0.5">
+                <label style="display:block; margin-bottom:5px;">기본 속도 (초):</label>
+                <input type="number" id="dl-speed" value="1.5" step="0.5">
             </div>
             <div style="display:flex; gap:5px;">
-                <button id="btn-start" style="flex:1; padding:12px; background:#00E676; border:none; border-radius:4px; font-weight:bold; font-size:15px;">시작</button>
+                <button id="btn-start" style="flex:1; padding:12px; background:#00E676; border:none; border-radius:4px; font-weight:bold;">시작</button>
                 <button id="btn-pause" style="flex:1; padding:12px; background:#f44336; border:none; border-radius:4px; display:none; color:white;">일시정지</button>
                 <button id="btn-resume" style="flex:1; padding:12px; background:#2196F3; border:none; border-radius:4px; display:none; color:white;">재개</button>
             </div>
@@ -150,9 +125,7 @@
             제목: ${state.novelTitle}<br>페이지 수를 입력하세요.
         </div>
 
-        <button id="btn-save" style="width:100%; margin-top:10px; padding:12px; background:#FF9800; color:white; border:none; border-radius:4px; font-weight:bold; display:none; font-size:15px;">
-            💾 파일 저장
-        </button>
+        <button id="btn-save" style="width:100%; margin-top:10px; padding:12px; background:#FF9800; color:white; border:none; border-radius:4px; font-weight:bold; display:none;">💾 저장 (파일명 자동생성)</button>
     `;
   document.body.appendChild(ui);
 
@@ -164,36 +137,31 @@
 
   const scanEpisodes = async () => {
     const totalPages = parseInt(document.getElementById('total-pages').value);
-    if (!totalPages || totalPages < 1) return alert('페이지 수를 입력하세요.');
-
+    if (!totalPages) return alert('페이지 수 입력 필요');
     document.getElementById('btn-scan').disabled = true;
     const currentBaseUrl = window.location.href.split('?')[0];
     let collected = [];
 
-    log(`🚀 ${totalPages} 페이지 스캔 시작...`);
-
+    log(`🚀 ${totalPages}페이지 스캔 시작...`);
     for (let page = totalPages; page >= 1; page--) {
       const url = `${currentBaseUrl}?spage=${page}`;
-      log(`... ${page} 페이지 읽는 중`);
+      log(`... ${page}페이지 읽는 중`);
       try {
         const res = await fetch(url);
         const html = await res.text();
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
+        const doc = new DOMParser().parseFromString(html, 'text/html');
         const links = Array.from(doc.querySelectorAll('.item-subject')).map(
           (el) => ({
             text: el.innerText.trim(),
             href: el.getAttribute('href'),
           }),
         );
-        links.reverse();
-        collected.push(...links);
+        collected.push(...links.reverse());
         await new Promise((r) => setTimeout(r, 200));
       } catch (e) {
-        log(`❌ 오류 (Page ${page}): ${e.message}`);
+        log(`❌ 오류: ${e.message}`);
       }
     }
-
     state.allLinks = collected;
     document.getElementById('step-setup').style.display = 'none';
     document.getElementById('step-download').style.display = 'block';
@@ -205,60 +173,110 @@
   const downloadEpisodes = async () => {
     const startIdx = parseInt(document.getElementById('range-start').value) - 1;
     const endIdx = parseInt(document.getElementById('range-end').value);
-    const speed = parseFloat(document.getElementById('dl-speed').value) * 1000;
+    const baseSpeed =
+      parseFloat(document.getElementById('dl-speed').value) * 1000;
     const targets = state.allLinks.slice(startIdx, endIdx);
     state.downloadedText = [];
 
-    const btnStart = document.getElementById('btn-start');
-    const btnPause = document.getElementById('btn-pause');
-    const btnResume = document.getElementById('btn-resume');
+    document.getElementById('btn-start').style.display = 'none';
+    document.getElementById('btn-pause').style.display = 'block';
 
-    btnStart.style.display = 'none';
-    btnPause.style.display = 'block';
+    let stopFlag = false; // 403 발생 시 루프 탈출용 플래그
 
     for (let i = 0; i < targets.length; i++) {
+      if (stopFlag) break;
+
       while (state.isPaused) {
-        log('⏸ 일시정지');
-        btnPause.style.display = 'none';
-        btnResume.style.display = 'block';
+        log('⏸ 일시정지 (대기 중...)');
+        document.getElementById('btn-pause').style.display = 'none';
+        document.getElementById('btn-resume').style.display = 'block';
         await new Promise((r) => setTimeout(r, 1000));
       }
-      btnResume.style.display = 'none';
-      btnPause.style.display = 'block';
+      document.getElementById('btn-resume').style.display = 'none';
+      document.getElementById('btn-pause').style.display = 'block';
 
       const ep = targets[i];
       const displayNum = startIdx + i + 1;
+
+      if (i > 0 && i % 30 === 0) {
+        log(`☕ 30화마다 휴식... (10초)`);
+        await new Promise((r) => setTimeout(r, 10000));
+      }
+
       log(`⬇ [${displayNum}/${endIdx}] 받는 중...`);
 
       try {
         const res = await fetch(ep.href);
-        if (!res.ok || res.url.includes('captcha'))
-          throw new Error('캡차/차단');
+
+        // [구분 로직 1] 캡차 감지 -> 일시정지
+        if (
+          res.url.includes('captcha') ||
+          res.url.includes('challenge') ||
+          res.url.includes('antibot')
+        ) {
+          throw new Error('CAPTCHA_DETECTED');
+        }
+
+        // [구분 로직 2] 403/429 차단 -> 즉시 종료
+        if (res.status === 403 || res.status === 429) {
+          throw new Error('403_BLOCKED');
+        }
+
         const html = await res.text();
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
+        const doc = new DOMParser().parseFromString(html, 'text/html');
         const contentEl = doc.querySelector('#novel_content');
+
         if (contentEl) {
           const cleanBody = cleanText(contentEl.innerHTML);
           state.downloadedText.push(`\n\n=== ${ep.text} ===\n\n${cleanBody}`);
         } else {
           log(`⚠️ 본문 없음: ${ep.text}`);
         }
-        await new Promise((r) => setTimeout(r, speed));
+
+        const randomJitter = Math.random() * 1000;
+        await new Promise((r) => setTimeout(r, baseSpeed + randomJitter));
       } catch (e) {
-        log(`⛔ 오류: ${e.message}`);
-        state.isPaused = true;
-        i--;
+        // 에러 종류에 따른 분기 처리
+        if (e.message === 'CAPTCHA_DETECTED') {
+          log(`🚨 캡차 발생! 새 탭에서 풀고 [재개]를 누르세요.`);
+          alert(
+            `[캡차 감지]\n새 탭에서 해당 화(${displayNum}화)에 접속해 캡차를 푸세요.\n풀고 나서 여기로 돌아와 [재개] 버튼을 누르면 다시 시작합니다.`,
+          );
+
+          window.open(ep.href, '_blank'); // 사용자를 위해 새 탭 열어줌
+          state.isPaused = true;
+          i--; // 현재 화(i)를 다운 못 받았으므로 다시 시도하기 위해 인덱스 감소
+        } else if (e.message === '403_BLOCKED') {
+          log(`⛔ 403 차단됨! 작업을 중단하고 파일 저장을 준비합니다.`);
+          alert(
+            `[403 에러 발생]\n더 이상 진행이 불가능합니다.\n지금까지 다운로드된 분량(${state.downloadedText.length}화)까지만 저장합니다.`,
+          );
+          stopFlag = true; // 루프 완전 종료
+        } else {
+          log(`❌ 기타 오류: ${e.message}. 일시정지 합니다.`);
+          state.isPaused = true;
+          i--; // 재시도
+        }
       }
     }
-    log('🎉 완료! 저장 버튼을 누르세요.');
-    btnPause.style.display = 'none';
+
+    // 종료 처리
+    document.getElementById('btn-pause').style.display = 'none';
     document.getElementById('btn-save').style.display = 'block';
 
-    // [V20 추가] 파일명 미리보기 로그 출력
+    const actualCount = state.downloadedText.length;
+    const realEndNum = startIdx + actualCount;
+    state.realEndIndex = realEndNum;
+
+    if (stopFlag) {
+      log(`⚠️ 403으로 인해 ${actualCount}화에서 중단됨.`);
+    } else {
+      log(`🎉 완료! (총 ${actualCount}화)`);
+    }
+
     const safeTitle = state.novelTitle.replace(/[\\/:*?"<>|]/g, '_');
-    const filename = `${safeTitle} ${startIdx + 1}-${endIdx}.txt`;
-    log(`📝 생성된 파일명: ${filename}`);
+    const displayStart = actualCount > 0 ? startIdx + 1 : 0;
+    log(`📝 저장될 파일명: ${safeTitle} ${displayStart}-${realEndNum}.txt`);
   };
 
   document.getElementById('btn-close').onclick = () => ui.remove();
@@ -269,14 +287,15 @@
     (state.isPaused = false);
 
   document.getElementById('btn-save').onclick = () => {
-    if (state.downloadedText.length === 0) return alert('내용 없음');
+    if (state.downloadedText.length === 0)
+      return alert('저장할 내용이 없습니다.');
 
-    const start = document.getElementById('range-start').value;
-    const end = document.getElementById('range-end').value;
+    const startIdx = parseInt(document.getElementById('range-start').value);
+    // 사용자가 처음에 입력한 '끝'이 아니라, 실제로 멈춘 'realEndIndex'를 사용
+    const realEnd = startIdx + state.downloadedText.length - 1;
+
     let safeTitle = state.novelTitle.replace(/[\\/:*?"<>|]/g, '_');
-
-    // [최종 확인] 파일명 생성
-    const filename = `${safeTitle} ${start}-${end}.txt`;
+    const filename = `${safeTitle} ${startIdx}-${realEnd}.txt`;
 
     const blob = new Blob([state.downloadedText.join('\n')], {
       type: 'text/plain',
