@@ -1,28 +1,38 @@
-/* * Booktoki Downloader (V19: Smart Filename)
- * 파일명: [소설제목] [시작화]~[끝화].txt 자동 생성
+/* * Booktoki Downloader (V20: Filename Debug)
+ * 파일명 생성 로직 강화 및 로그 출력
  */
 
 (function () {
   const existingUI = document.getElementById('my-downloader-ui');
   if (existingUI) existingUI.remove();
 
-  // 1. 소설 제목 추출 함수 (사이트 구조에 맞춰서 제목 찾기)
+  // 1. 소설 제목 추출 (여러 방법 시도)
   const getNovelTitle = () => {
     try {
-      // 메타 태그에서 1순위로 가져옴 (가장 정확함)
-      const metaTitle = document.querySelector('meta[property="og:title"]');
-      if (metaTitle) return metaTitle.content.replace(' | 북토키', '').trim();
+      // 방법 A: 메타 태그
+      const meta = document.querySelector('meta[property="og:title"]');
+      if (meta) return meta.content.replace(' | 북토키', '').trim();
 
-      // 실패 시 HTML 태그에서 찾기
-      const el = document.querySelector(
-        '.view-tit, .tit_subject, .board-title, h1',
+      // 방법 B: 헤더 제목
+      const header = document.querySelector(
+        '.view-tit, .tit_subject, .board-title',
       );
-      if (el) return el.innerText.trim();
+      if (header) return header.innerText.trim();
+
+      // 방법 C: Reference 코드 방식 (XPath 대응)
+      const xpathEl = document.evaluate(
+        '//*[@id="content_wrapper"]//span',
+        document,
+        null,
+        XPathResult.FIRST_ORDERED_NODE_TYPE,
+        null,
+      ).singleNodeValue;
+      if (xpathEl && xpathEl.textContent.length > 2)
+        return xpathEl.textContent.trim();
     } catch (e) {}
-    return 'Unknown_Novel';
+    return 'Booktoki_Novel'; // 실패 시 기본값
   };
 
-  // 텍스트 정제 함수
   const unescapeHTML = (text) => {
     const entities = {
       '&lt;': '<',
@@ -58,20 +68,19 @@
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.length > 0)
-      .join('\n\n'); // 줄바꿈 공백 유지
+      .join('\n\n');
   };
 
   let state = {
     isPaused: false,
     allLinks: [],
     downloadedText: [],
-    novelTitle: getNovelTitle(), // 시작하자마자 제목 저장
+    novelTitle: getNovelTitle(),
   };
 
   const ui = document.createElement('div');
   ui.id = 'my-downloader-ui';
 
-  // 메인 박스 스타일
   ui.style.cssText = `
         position: fixed; top: 20px; right: 20px; width: 360px;
         background: #111; color: #fff; padding: 20px;
@@ -245,6 +254,11 @@
     log('🎉 완료! 저장 버튼을 누르세요.');
     btnPause.style.display = 'none';
     document.getElementById('btn-save').style.display = 'block';
+
+    // [V20 추가] 파일명 미리보기 로그 출력
+    const safeTitle = state.novelTitle.replace(/[\\/:*?"<>|]/g, '_');
+    const filename = `${safeTitle} ${startIdx + 1}-${endIdx}.txt`;
+    log(`📝 생성된 파일명: ${filename}`);
   };
 
   document.getElementById('btn-close').onclick = () => ui.remove();
@@ -254,16 +268,14 @@
   document.getElementById('btn-resume').onclick = () =>
     (state.isPaused = false);
 
-  // [핵심] 파일명 생성 로직
   document.getElementById('btn-save').onclick = () => {
     if (state.downloadedText.length === 0) return alert('내용 없음');
 
-    // 1. 파일명 재료 수집
     const start = document.getElementById('range-start').value;
     const end = document.getElementById('range-end').value;
-    let safeTitle = state.novelTitle.replace(/[\\/:*?"<>|]/g, '_'); // 특수문자 제거
+    let safeTitle = state.novelTitle.replace(/[\\/:*?"<>|]/g, '_');
 
-    // 2. 최종 파일명 생성
+    // [최종 확인] 파일명 생성
     const filename = `${safeTitle} ${start}-${end}.txt`;
 
     const blob = new Blob([state.downloadedText.join('\n')], {
