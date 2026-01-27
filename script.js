@@ -1,5 +1,5 @@
-/* * Booktoki Downloader (V17: Input Width Force Fix)
- * 입력창 너비를 80px로 강제 고정하여 레이아웃 이탈 원천 봉쇄
+/* * Booktoki Downloader (V18: Line Spacing Fix)
+ * 텍스트 가독성을 위해 줄바꿈 시 빈 줄(공백)을 강제로 추가함
  */
 
 (function () {
@@ -30,19 +30,26 @@
   };
 
   const cleanText = (text) => {
-    text = text.replace(/<div>/g, '');
-    text = text.replace(/<\/div>/g, '');
+    // 1. 태그를 줄바꿈으로 변환
+    text = text.replace(/<div>/g, '\n');
+    text = text.replace(/<\/div>/g, '\n');
     text = text.replace(/<p>/g, '\n');
-    text = text.replace(/<\/p>/g, '\n\n');
+    text = text.replace(/<\/p>/g, '\n');
     text = text.replace(/<br\s*[/]?>/g, '\n');
+
+    // 2. 나머지 태그 제거
     text = text.replace(/<[^>]*>/g, '');
+
+    // 3. 특수문자 복원 및 다중 공백 제거
     text = text.replace(/ {2,}/g, ' ');
     text = unescapeHTML(text);
+
+    // 4. [핵심 수정] 각 줄을 다듬고, 빈 줄은 제거하되, 합칠 때 '\n\n'으로 합쳐서 공백 확보
     return text
       .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .join('\n');
+      .map((line) => line.trim()) // 앞뒤 공백 제거
+      .filter((line) => line.length > 0) // 내용 없는 줄 삭제 (무의미한 공백 방지)
+      .join('\n\n'); // [중요] 줄 사이에 빈 줄 하나씩 강제 삽입
   };
 
   let state = {
@@ -54,7 +61,7 @@
   const ui = document.createElement('div');
   ui.id = 'my-downloader-ui';
 
-  // 메인 박스 스타일 (너비 360px)
+  // 메인 박스 스타일
   ui.style.cssText = `
         position: fixed; top: 20px; right: 20px; width: 360px;
         background: #111; color: #fff; padding: 20px;
@@ -66,13 +73,11 @@
 
   ui.innerHTML = `
         <style>
-            /* 모든 요소 초기화 */
             #my-downloader-ui * {
                 box-sizing: border-box !important;
             }
-            /* 입력창 스타일: 너비 80px 강제, 높이 35px 고정 */
             #my-downloader-ui input[type="number"] {
-                width: 80px !important; /* [핵심] 무조건 80px */
+                width: 80px !important;
                 min-width: 80px !important;
                 max-width: 80px !important;
                 height: 35px !important;
@@ -89,7 +94,6 @@
                 -webkit-text-fill-color: #000000 !important;
                 opacity: 1 !important;
             }
-            /* 페이지 수 입력창만 예외적으로 100% (위쪽 큰 거) */
             #my-downloader-ui #total-pages {
                 width: 100% !important;
                 max-width: 100% !important;
@@ -105,7 +109,7 @@
         </style>
 
         <div style="border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between;">
-            <h3 style="margin:0; color:#00E676;">✅ V17: 너비 80px 고정</h3>
+            <h3 style="margin:0; color:#00E676;">✅ V18: 줄간격 개선됨</h3>
             <button id="btn-close" style="background:none; border:none; color:#fff; cursor:pointer; font-size:16px;">✕</button>
         </div>
 
@@ -247,6 +251,7 @@
         const contentEl = doc.querySelector('#novel_content');
 
         if (contentEl) {
+          // [변경됨] cleanText가 줄바꿈 2번(\n\n)을 적용해서 리턴함
           const cleanBody = cleanText(contentEl.innerHTML);
           state.downloadedText.push(`\n\n=== ${ep.text} ===\n\n${cleanBody}`);
         } else {
