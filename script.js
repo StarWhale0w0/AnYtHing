@@ -1,11 +1,12 @@
-/* * Booktoki Downloader (V15: Layout Overflow Fixed)
- * 입력창 크기를 픽셀 단위로 강제 고정하여 레이아웃 이탈 방지
+/* * Booktoki Downloader (V16: Box-Sizing Fix)
+ * 입력창이 박스를 뚫고 나가는 문제를 'box-sizing: border-box'로 완벽 해결
  */
 
 (function () {
   const existingUI = document.getElementById('my-downloader-ui');
   if (existingUI) existingUI.remove();
 
+  // 텍스트 정제 함수
   const unescapeHTML = (text) => {
     const entities = {
       '&lt;': '<',
@@ -53,19 +54,22 @@
   const ui = document.createElement('div');
   ui.id = 'my-downloader-ui';
 
-  // UI 크기를 360px로 살짝 늘림
+  // 메인 박스 스타일: box-sizing 적용 및 너비 380px로 살짝 확보
   ui.style.cssText = `
-        position: fixed; top: 20px; right: 20px; width: 360px;
+        position: fixed; top: 20px; right: 20px; width: 380px;
         background: #111; color: #fff; padding: 20px;
         z-index: 2147483647; border-radius: 10px; font-family: sans-serif;
         box-shadow: 0 0 20px rgba(0,0,0,1); border: 2px solid #555;
         font-size: 14px; line-height: 1.5; text-align: left;
-        box-sizing: border-box;
+        box-sizing: border-box !important; /* 패딩 포함 크기 계산 */
     `;
 
   ui.innerHTML = `
         <style>
-            /* 모든 입력창 스타일 강제 고정 */
+            /* 모든 요소에 box-sizing 강제 적용 (가출 방지 핵심) */
+            #my-downloader-ui * {
+                box-sizing: border-box !important;
+            }
             #my-downloader-ui input[type="number"] {
                 background-color: #ffffff !important;
                 color: #000000 !important;
@@ -75,11 +79,11 @@
                 font-weight: bold !important;
                 text-align: center !important;
                 font-size: 16px !important;
-                height: 35px !important;
-                box-sizing: border-box !important;
+                height: 40px !important;
+                margin: 0 !important;
                 -webkit-text-fill-color: #000000 !important;
                 opacity: 1 !important;
-                margin: 0 !important; /* 외부 여백 제거 */
+                display: block !important;
             }
             #my-downloader-ui label, #my-downloader-ui span {
                 color: #ffffff !important;
@@ -91,7 +95,7 @@
         </style>
 
         <div style="border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between;">
-            <h3 style="margin:0; color:#00E676;">✅ V15: 레이아웃 고정</h3>
+            <h3 style="margin:0; color:#00E676;">✅ V16: 가출 방지 완료</h3>
             <button id="btn-close" style="background:none; border:none; color:#fff; cursor:pointer; font-size:16px;">✕</button>
         </div>
 
@@ -112,16 +116,16 @@
 
             <div style="margin-bottom:15px;">
                 <label style="display:block; margin-bottom:5px;">다운로드 구간 (시작 ~ 끝):</label>
-                <div style="display:flex; gap:10px; align-items:center;">
-                    <input type="number" id="range-start" value="1" style="width: 130px !important;">
+                <div style="display:flex; gap:10px; align-items:center; width: 100%;">
+                    <input type="number" id="range-start" value="1" style="width: 45% !important;">
                     <span>~</span>
-                    <input type="number" id="range-end" value="1" style="width: 130px !important;">
+                    <input type="number" id="range-end" value="1" style="width: 45% !important;">
                 </div>
             </div>
             
              <div style="margin-bottom:20px;">
                 <label style="display:block; margin-bottom:5px;">속도 (초):</label>
-                <input type="number" id="dl-speed" value="1.0" step="0.5" style="width: 100px !important;">
+                <input type="number" id="dl-speed" value="1.0" step="0.5" style="width: 100% !important;">
             </div>
 
             <div style="display:flex; gap:5px;">
