@@ -1,5 +1,5 @@
-/* * Booktoki Downloader (Based on User's Working Reference)
- * V12: Reference Logic Integrated + Merged TXT Output
+/* * Booktoki Downloader (V13: UI Visibility Fixed)
+ * 입력창이 흰색 배경에 검은 글씨로 잘 보이게 수정됨
  */
 
 (function () {
@@ -7,7 +7,7 @@
   const existingUI = document.getElementById('my-downloader-ui');
   if (existingUI) existingUI.remove();
 
-  // 1. 님이 주신 코드의 핵심 함수들 (텍스트 정제)
+  // 1. 텍스트 정제 함수들
   const unescapeHTML = (text) => {
     const entities = {
       '&lt;': '<',
@@ -34,9 +34,9 @@
     text = text.replace(/<div>/g, '');
     text = text.replace(/<\/div>/g, '');
     text = text.replace(/<p>/g, '\n');
-    text = text.replace(/<\/p>/g, '\n\n'); // 문단 구분 명확히
+    text = text.replace(/<\/p>/g, '\n\n');
     text = text.replace(/<br\s*[/]?>/g, '\n');
-    text = text.replace(/<[^>]*>/g, ''); // 나머지 태그 제거
+    text = text.replace(/<[^>]*>/g, '');
     text = text.replace(/ {2,}/g, ' ');
     text = unescapeHTML(text);
     return text
@@ -49,7 +49,7 @@
   // 상태 변수
   let state = {
     isPaused: false,
-    allLinks: [], // { title, url } 객체 저장
+    allLinks: [],
     downloadedText: [],
   };
 
@@ -58,58 +58,76 @@
   ui.id = 'my-downloader-ui';
   ui.style.cssText = `
         position: fixed; top: 20px; right: 20px; width: 350px;
-        background: #1a1a1a; color: #fff; padding: 20px;
-        z-index: 9999999; border-radius: 10px; font-family: sans-serif;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.8); border: 1px solid #444;
-        font-size: 13px; line-height: 1.5;
+        background: #1a1a1a; color: #fff; padding: 25px;
+        z-index: 9999999; border-radius: 12px; font-family: sans-serif;
+        box-shadow: 0 15px 40px rgba(0,0,0,0.9); border: 2px solid #444;
+        font-size: 14px; line-height: 1.5;
+    `;
+
+  // 입력창 공통 스타일 (흰색 배경, 검은 글씨, 잘 보이게)
+  const inputStyle = `
+        width: 80px; 
+        padding: 8px; 
+        background-color: #ffffff !important; 
+        color: #000000 !important; 
+        border: 2px solid #888; 
+        border-radius: 4px; 
+        font-weight: bold; 
+        text-align: center;
+        font-size: 14px;
     `;
 
   ui.innerHTML = `
-        <div style="border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between;">
-            <h3 style="margin:0; color:#00E676;">✅ Reference 기반 다운로더</h3>
-            <button id="btn-close" style="background:none; border:none; color:#888; cursor:pointer;">X</button>
+        <div style="border-bottom:1px solid #555; padding-bottom:15px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center;">
+            <h3 style="margin:0; color:#00E676; font-size:16px;">✅ 입력창 개선판 (V13)</h3>
+            <button id="btn-close" style="background:none; border:none; color:#aaa; cursor:pointer; font-size:18px; font-weight:bold;">✕</button>
         </div>
 
         <div id="step-setup">
-            <div style="margin-bottom:15px;">
-                <label style="display:block; color:#aaa; margin-bottom:5px;">1. 목차 페이지 수 (spage):</label>
-                <input type="number" id="total-pages" value="1" style="width:100%; padding:8px; background:#333; border:1px solid #555; color:#fff; border-radius:4px;">
-                <p style="font-size:11px; color:#888; margin-top:5px;">
-                    * 사이트 하단에 적힌 <b>가장 큰 페이지 숫자</b>를 적으세요.<br>
-                    * 예: 1500화라면 보통 <b>30~50</b> 정도입니다.
+            <div style="margin-bottom:20px;">
+                <label style="display:block; color:#ddd; margin-bottom:8px; font-weight:bold;">1. 전체 페이지 수 (spage):</label>
+                <input type="number" id="total-pages" value="1" style="width:100%; box-sizing:border-box; padding:10px; background-color:#ffffff !important; color:#000000 !important; border:2px solid #ccc; border-radius:5px; font-size:15px; font-weight:bold;">
+                
+                <p style="font-size:12px; color:#aaa; margin-top:8px; line-height:1.4;">
+                    * 사이트 맨 아래 숫자 버튼 중 <b>가장 큰 숫자</b>를 입력하세요.<br>
+                    (클릭해서 타이핑 가능)
                 </p>
             </div>
             
-            <button id="btn-scan" style="width:100%; padding:12px; background:#00E676; color:#000; border:none; border-radius:4px; font-weight:bold; cursor:pointer;">
-                목차 가져오기 (역순 스캔)
+            <button id="btn-scan" style="width:100%; padding:14px; background:#00E676; color:#000; border:none; border-radius:6px; font-weight:bold; cursor:pointer; font-size:15px;">
+                목차 가져오기 (스캔)
             </button>
         </div>
 
         <div id="step-download" style="display:none;">
-            <div style="background:#222; padding:10px; border-radius:4px; margin-bottom:10px;">
-                총 <span id="found-count" style="color:#00E676; font-weight:bold;">0</span>화 발견됨
+            <div style="background:#333; padding:12px; border-radius:6px; margin-bottom:15px; border:1px solid #555;">
+                발견된 회차: <span id="found-count" style="color:#00E676; font-weight:bold; font-size:16px;">0</span> 화
             </div>
 
-            <div style="display:flex; gap:10px; margin-bottom:10px;">
-                <input type="number" id="range-start" value="1" style="width:60px; text-align:center; padding:5px;"> ~ 
-                <input type="number" id="range-end" value="1" style="width:60px; text-align:center; padding:5px;"> 화
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:15px;">
+                <span style="color:#ddd;">구간:</span>
+                <input type="number" id="range-start" value="1" style="${inputStyle}">
+                <span style="color:#ddd;">~</span>
+                <input type="number" id="range-end" value="1" style="${inputStyle}">
             </div>
-             <div style="margin-bottom:10px;">
-                속도(초): <input type="number" id="dl-speed" value="1.0" step="0.5" style="width:50px; text-align:center;">
+            
+             <div style="display:flex; align-items:center; gap:10px; margin-bottom:20px;">
+                <span style="color:#ddd;">속도(초):</span>
+                <input type="number" id="dl-speed" value="1.0" step="0.5" style="${inputStyle}">
             </div>
 
-            <div style="display:flex; gap:5px;">
-                <button id="btn-start" style="flex:1; padding:10px; background:#00E676; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">다운로드</button>
-                <button id="btn-pause" style="flex:1; padding:10px; background:#f44336; border:none; border-radius:4px; cursor:pointer; display:none; color:white;">일시정지</button>
-                <button id="btn-resume" style="flex:1; padding:10px; background:#2196F3; border:none; border-radius:4px; cursor:pointer; display:none; color:white;">재개</button>
+            <div style="display:flex; gap:8px;">
+                <button id="btn-start" style="flex:1; padding:12px; background:#00E676; color:#000; border:none; border-radius:6px; cursor:pointer; font-weight:bold;">다운로드</button>
+                <button id="btn-pause" style="flex:1; padding:12px; background:#f44336; color:#fff; border:none; border-radius:6px; cursor:pointer; display:none;">일시정지</button>
+                <button id="btn-resume" style="flex:1; padding:12px; background:#2196F3; color:#fff; border:none; border-radius:6px; cursor:pointer; display:none;">재개</button>
             </div>
         </div>
 
-        <div id="log-box" style="margin-top:15px; background:#000; height:120px; overflow-y:auto; padding:10px; font-family:monospace; color:#ccc; border:1px solid #333; font-size:11px;">
-            목차 페이지 수를 입력하고 버튼을 누르세요.
+        <div id="log-box" style="margin-top:15px; background:#000; height:100px; overflow-y:auto; padding:10px; font-family:monospace; color:#ccc; border:1px solid #444; font-size:12px;">
+            페이지 수를 입력하고 스캔 버튼을 누르세요.
         </div>
 
-        <button id="btn-save" style="width:100%; margin-top:10px; padding:12px; background:#FF9800; color:white; border:none; border-radius:4px; font-weight:bold; cursor:pointer; display:none;">
+        <button id="btn-save" style="width:100%; margin-top:15px; padding:14px; background:#FF9800; color:white; border:none; border-radius:6px; font-weight:bold; cursor:pointer; display:none; font-size:15px;">
             💾 통합 txt 파일 저장
         </button>
     `;
@@ -121,19 +139,18 @@
     box.scrollTop = box.scrollHeight;
   };
 
-  // 2. 목차 수집 로직 (Reference: 역순 스캔 & .item-subject)
+  // 2. 목차 수집
   const scanEpisodes = async () => {
     const totalPages = parseInt(document.getElementById('total-pages').value);
     if (!totalPages || totalPages < 1)
-      return alert('올바른 페이지 수를 입력하세요.');
+      return alert('페이지 수를 정확히 입력해주세요.');
 
     document.getElementById('btn-scan').disabled = true;
     const currentBaseUrl = window.location.href.split('?')[0];
     let collected = [];
 
-    log(`🚀 총 ${totalPages} 페이지 역순 스캔 시작...`);
+    log(`🚀 ${totalPages} 페이지 역순 스캔 시작...`);
 
-    // Reference Logic: page를 totalPages부터 1까지 역순으로 돔
     for (let page = totalPages; page >= 1; page--) {
       const url = `${currentBaseUrl}?spage=${page}`;
       log(`... ${page} 페이지 읽는 중`);
@@ -144,21 +161,17 @@
         const parser = new DOMParser();
         const doc = parser.parseFromString(html, 'text/html');
 
-        // Reference Selector: .item-subject (이게 정답이었음)
         const links = Array.from(doc.querySelectorAll('.item-subject')).map(
           (el) => ({
-            text: el.innerText.trim(), // 제목도 같이 저장
+            text: el.innerText.trim(),
             href: el.getAttribute('href'),
           }),
         );
 
-        // 한 페이지 내에서는 최신순(위) -> 과거순(아래)이므로
-        // 과거 -> 최신 순서로 맞추기 위해 reverse()
-        links.reverse();
-
+        links.reverse(); // 과거 -> 최신 순 정렬
         collected.push(...links);
 
-        await new Promise((r) => setTimeout(r, 200)); // 차단 방지
+        await new Promise((r) => setTimeout(r, 200));
       } catch (e) {
         log(`❌ 오류 (Page ${page}): ${e.message}`);
       }
@@ -166,7 +179,6 @@
 
     state.allLinks = collected;
 
-    // UI 전환
     document.getElementById('step-setup').style.display = 'none';
     document.getElementById('step-download').style.display = 'block';
     document.getElementById('found-count').innerText = state.allLinks.length;
@@ -174,7 +186,7 @@
     log(`✅ 스캔 완료! 총 ${state.allLinks.length}화 발견.`);
   };
 
-  // 3. 다운로드 로직 (Reference: cleanText 적용)
+  // 3. 다운로드
   const downloadEpisodes = async () => {
     const startIdx = parseInt(document.getElementById('range-start').value) - 1;
     const endIdx = parseInt(document.getElementById('range-end').value);
@@ -207,20 +219,16 @@
 
       try {
         const res = await fetch(ep.href);
-        // 캡차 감지
         if (!res.ok || res.url.includes('captcha'))
           throw new Error('캡차/차단 감지');
 
         const html = await res.text();
         const parser = new DOMParser();
         const doc = parser.parseFromString(html, 'text/html');
-
-        // Reference Selector: #novel_content
         const contentEl = doc.querySelector('#novel_content');
 
         if (contentEl) {
           const cleanBody = cleanText(contentEl.innerHTML);
-          // 제목 + 본문 합치기
           state.downloadedText.push(`\n\n=== ${ep.text} ===\n\n${cleanBody}`);
         } else {
           log(`⚠️ 본문 없음: ${ep.text}`);
@@ -230,7 +238,7 @@
       } catch (e) {
         log(`⛔ 오류: ${e.message}`);
         state.isPaused = true;
-        i--; // 재시도
+        i--;
       }
     }
 
@@ -239,7 +247,6 @@
     document.getElementById('btn-save').style.display = 'block';
   };
 
-  // 버튼 이벤트
   document.getElementById('btn-close').onclick = () => ui.remove();
   document.getElementById('btn-scan').onclick = scanEpisodes;
   document.getElementById('btn-start').onclick = downloadEpisodes;
@@ -253,7 +260,7 @@
     });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'Novel_Merged.txt'; // 통합 txt 파일
+    a.download = 'Novel_Merged.txt';
     a.click();
   };
 })();
