@@ -1,5 +1,5 @@
-/* * Booktoki Downloader Script (Fixed SPAGE logic)
- * V10: spage 파라미터 강제 적용 및 리스트 선택자 정밀화
+/* * Booktoki Downloader (Based on User's Working Reference)
+ * V12: Reference Logic Integrated + Merged TXT Output
  */
 
 (function () {
@@ -7,197 +7,192 @@
   const existingUI = document.getElementById('my-downloader-ui');
   if (existingUI) existingUI.remove();
 
-  // 설정: 잡다한 링크 제외하고 '진짜 목록'만 타겟팅
-  const CONFIG = {
-    contentSelector: '.view-content, #novel_content, .content, .viewer-text',
-    // .serial-list나 .list-body 직계 자식만 찾아서 사이드바 광고/인기글 제외
-    listLinkSelector:
-      '.serial-list .list-item a, .list-body .list-item a, #novel_list .list-item a',
-    titleSelector: '.view-tit, .tit_subject, h1',
+  // 1. 님이 주신 코드의 핵심 함수들 (텍스트 정제)
+  const unescapeHTML = (text) => {
+    const entities = {
+      '&lt;': '<',
+      '&gt;': '>',
+      '&amp;': '&',
+      '&quot;': '"',
+      '&apos;': "'",
+      '&#039;': "'",
+      '&nbsp;': ' ',
+      '&ndash;': '–',
+      '&mdash;': '—',
+      '&lsquo;': '‘',
+      '&rsquo;': '’',
+      '&ldquo;': '“',
+      '&rdquo;': '”',
+    };
+    return text.replace(
+      /&[a-z0-9#]+;/g,
+      (entity) => entities[entity] || entity,
+    );
   };
 
+  const cleanText = (text) => {
+    text = text.replace(/<div>/g, '');
+    text = text.replace(/<\/div>/g, '');
+    text = text.replace(/<p>/g, '\n');
+    text = text.replace(/<\/p>/g, '\n\n'); // 문단 구분 명확히
+    text = text.replace(/<br\s*[/]?>/g, '\n');
+    text = text.replace(/<[^>]*>/g, ''); // 나머지 태그 제거
+    text = text.replace(/ {2,}/g, ' ');
+    text = unescapeHTML(text);
+    return text
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .join('\n');
+  };
+
+  // 상태 변수
   let state = {
     isPaused: false,
-    allLinks: [],
-    downloadQueue: [],
+    allLinks: [], // { title, url } 객체 저장
     downloadedText: [],
-    currentNovelId:
-      window.location.pathname.match(/\/novel\/(\d+)/)?.[1] || null,
   };
 
-  // UI 생성 (유니코드 적용)
+  // UI 생성
   const ui = document.createElement('div');
   ui.id = 'my-downloader-ui';
   ui.style.cssText = `
-        position: fixed; top: 20px; right: 20px; width: 340px;
-        background: #121212; color: #e0e0e0; padding: 20px;
-        z-index: 9999999; border-radius: 12px; font-family: sans-serif;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.8); border: 1px solid #333;
+        position: fixed; top: 20px; right: 20px; width: 350px;
+        background: #1a1a1a; color: #fff; padding: 20px;
+        z-index: 9999999; border-radius: 10px; font-family: sans-serif;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.8); border: 1px solid #444;
         font-size: 13px; line-height: 1.5;
     `;
 
   ui.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; border-bottom:1px solid #333; padding-bottom:10px;">
-            <h3 style="margin:0; color:#00E676; font-size:16px;">📥 Booktoki Fixer</h3>
-            <button id="btn-close" style="background:none; border:none; color:#777; cursor:pointer; font-size:16px;">✕</button>
+        <div style="border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between;">
+            <h3 style="margin:0; color:#00E676;">✅ Reference 기반 다운로더</h3>
+            <button id="btn-close" style="background:none; border:none; color:#888; cursor:pointer;">X</button>
         </div>
 
-        <div id="step-scan">
-            <p style="color:#aaa; margin-bottom:10px;">\uc18c\uc124 ID: <b style="color:#fff">${state.currentNovelId || '\uac10\uc9c0 \ubd88\uac00'}</b></p>
-            <button id="btn-scan" style="width:100%; padding:12px; background:#333; color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:bold; transition:0.2s;">
-                🔍 \uc804\uccb4 \ubaa9\ucc28 \uc2a4\uce94 \uc2dc\uc791
+        <div id="step-setup">
+            <div style="margin-bottom:15px;">
+                <label style="display:block; color:#aaa; margin-bottom:5px;">1. 목차 페이지 수 (spage):</label>
+                <input type="number" id="total-pages" value="1" style="width:100%; padding:8px; background:#333; border:1px solid #555; color:#fff; border-radius:4px;">
+                <p style="font-size:11px; color:#888; margin-top:5px;">
+                    * 사이트 하단에 적힌 <b>가장 큰 페이지 숫자</b>를 적으세요.<br>
+                    * 예: 1500화라면 보통 <b>30~50</b> 정도입니다.
+                </p>
+            </div>
+            
+            <button id="btn-scan" style="width:100%; padding:12px; background:#00E676; color:#000; border:none; border-radius:4px; font-weight:bold; cursor:pointer;">
+                목차 가져오기 (역순 스캔)
             </button>
         </div>
 
         <div id="step-download" style="display:none;">
-            <div style="background:#1e1e1e; padding:10px; border-radius:6px; margin-bottom:10px;">
-                <div style="color:#00E676; font-weight:bold; font-size:14px;">\ucd1d <span id="count-total">0</span>\ud654 \ubc1c\uacac</div>
-                <div style="font-size:11px; color:#888; margin-top:4px;">(\uc0ac\uc774\ub4dc\ubc14 \uad11\uace0 \uc81c\uac70\ub428)</div>
+            <div style="background:#222; padding:10px; border-radius:4px; margin-bottom:10px;">
+                총 <span id="found-count" style="color:#00E676; font-weight:bold;">0</span>화 발견됨
             </div>
-            
+
             <div style="display:flex; gap:10px; margin-bottom:10px;">
-                <input type="number" id="range-start" value="1" style="width:50px; background:#2c2c2c; border:none; color:#fff; text-align:center; padding:5px; border-radius:4px;">
-                <span style="align-self:center;">~</span>
-                <input type="number" id="range-end" value="0" style="width:50px; background:#2c2c2c; border:none; color:#fff; text-align:center; padding:5px; border-radius:4px;">
-                <span style="align-self:center; font-size:11px; color:#aaa;">\ud654</span>
+                <input type="number" id="range-start" value="1" style="width:60px; text-align:center; padding:5px;"> ~ 
+                <input type="number" id="range-end" value="1" style="width:60px; text-align:center; padding:5px;"> 화
+            </div>
+             <div style="margin-bottom:10px;">
+                속도(초): <input type="number" id="dl-speed" value="1.0" step="0.5" style="width:50px; text-align:center;">
             </div>
 
-            <div style="margin-bottom:15px;">
-                <label style="color:#aaa; font-size:12px;">\uc18d\ub3c4(\ucd08): </label>
-                <input type="number" id="speed" value="1.5" step="0.5" style="width:50px; background:#2c2c2c; border:none; color:#fff; text-align:center; padding:4px; border-radius:4px;">
-            </div>
-
-            <div style="display:flex; gap:8px;">
-                <button id="btn-start" style="flex:2; padding:10px; background:#00E676; color:#000; border:none; border-radius:6px; cursor:pointer; font-weight:bold;">\uc2dc\uc791</button>
-                <button id="btn-pause" style="flex:1; padding:10px; background:#f44336; color:#fff; border:none; border-radius:6px; cursor:pointer; display:none;">\uc77c\uc2dc\uc815\uc9c0</button>
-                <button id="btn-resume" style="flex:1; padding:10px; background:#2196F3; color:#fff; border:none; border-radius:6px; cursor:pointer; display:none;">\uc7ac\uac1c</button>
+            <div style="display:flex; gap:5px;">
+                <button id="btn-start" style="flex:1; padding:10px; background:#00E676; border:none; border-radius:4px; cursor:pointer; font-weight:bold;">다운로드</button>
+                <button id="btn-pause" style="flex:1; padding:10px; background:#f44336; border:none; border-radius:4px; cursor:pointer; display:none; color:white;">일시정지</button>
+                <button id="btn-resume" style="flex:1; padding:10px; background:#2196F3; border:none; border-radius:4px; cursor:pointer; display:none; color:white;">재개</button>
             </div>
         </div>
 
-        <div id="status-box" style="margin-top:15px; background:#000; padding:10px; height:100px; overflow-y:auto; border-radius:6px; border:1px solid #333; font-family:monospace; color:#ccc;">
-            \uc900\ube44 \uc644\ub8cc.
+        <div id="log-box" style="margin-top:15px; background:#000; height:120px; overflow-y:auto; padding:10px; font-family:monospace; color:#ccc; border:1px solid #333; font-size:11px;">
+            목차 페이지 수를 입력하고 버튼을 누르세요.
         </div>
 
-        <button id="btn-save" style="width:100%; margin-top:10px; padding:12px; background:#FF9800; color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:bold; display:none;">
-            💾 \ud14d\uc2a4\ud2b8 \ud30c\uc77c \uc800\uc7a5
+        <button id="btn-save" style="width:100%; margin-top:10px; padding:12px; background:#FF9800; color:white; border:none; border-radius:4px; font-weight:bold; cursor:pointer; display:none;">
+            💾 통합 txt 파일 저장
         </button>
     `;
   document.body.appendChild(ui);
 
   const log = (msg) => {
-    const box = document.getElementById('status-box');
-    if (box) {
-      box.innerHTML += `<div>> ${msg}</div>`;
-      box.scrollTop = box.scrollHeight;
-    }
+    const box = document.getElementById('log-box');
+    box.innerHTML += `<div>> ${msg}</div>`;
+    box.scrollTop = box.scrollHeight;
   };
 
-  // [핵심 수정] spage 파라미터 강제 적용
-  const getPageUrl = (pageNum) => {
-    const url = new URL(window.location.href);
-    url.searchParams.delete('page'); // 기존 page 삭제
-    url.searchParams.set('spage', pageNum); // spage 강제 설정
-    return url.toString();
-  };
+  // 2. 목차 수집 로직 (Reference: 역순 스캔 & .item-subject)
+  const scanEpisodes = async () => {
+    const totalPages = parseInt(document.getElementById('total-pages').value);
+    if (!totalPages || totalPages < 1)
+      return alert('올바른 페이지 수를 입력하세요.');
 
-  const startScan = async () => {
-    const btnScan = document.getElementById('btn-scan');
-    btnScan.disabled = true;
-    btnScan.style.background = '#555';
-    btnScan.innerText = '\uc2a4\uce94 \uc911...';
+    document.getElementById('btn-scan').disabled = true;
+    const currentBaseUrl = window.location.href.split('?')[0];
+    let collected = [];
 
-    let page = 1;
-    let collected = new Set();
-    let firstPageHtml = null;
+    log(`🚀 총 ${totalPages} 페이지 역순 스캔 시작...`);
 
-    log('🚀 \ubaa9\ucc28 \uc2a4\uce94 (\uac15\ub825 \ubaa8\ub4dc)...');
+    // Reference Logic: page를 totalPages부터 1까지 역순으로 돔
+    for (let page = totalPages; page >= 1; page--) {
+      const url = `${currentBaseUrl}?spage=${page}`;
+      log(`... ${page} 페이지 읽는 중`);
 
-    while (true) {
-      const url = getPageUrl(page);
       try {
         const res = await fetch(url);
-        const text = await res.text();
-
-        // 페이지 반복 감지
-        const currentHtmlSignature = text.substring(500, 2000);
-        if (page === 1) {
-          firstPageHtml = currentHtmlSignature;
-        } else if (currentHtmlSignature === firstPageHtml) {
-          log(`✅ \ub05d! (\ud398\uc774\uc9c0 \ubc18\ubcf5)`);
-          break;
-        }
-
+        const html = await res.text();
         const parser = new DOMParser();
-        const doc = parser.parseFromString(text, 'text/html');
-        const links = doc.querySelectorAll(CONFIG.listLinkSelector);
+        const doc = parser.parseFromString(html, 'text/html');
 
-        let validCountOnPage = 0;
-
-        links.forEach((a) => {
-          const href = a.getAttribute('href');
-          if (!href) return;
-          if (state.currentNovelId && href.includes(state.currentNovelId))
-            return;
-
-          // 순수 회차 링크만 수집
-          if (/\/novel\/\d+/.test(href)) {
-            if (!collected.has(href)) {
-              collected.add(href);
-              validCountOnPage++;
-            }
-          }
-        });
-
-        if (validCountOnPage === 0 && page > 1) {
-          log(
-            `✅ \ub05d! (\ub354 \uc774\uc0c1 \uac80\uc0c9\ub418\ub294 \ud68c\ucc28 \uc5c6\uc74c)`,
-          );
-          break;
-        }
-
-        log(
-          `📃 ${page}P: ${validCountOnPage}\uac1c \ucc3e\uc74c (\ub204\uc801 ${collected.size}\uac1c)`,
+        // Reference Selector: .item-subject (이게 정답이었음)
+        const links = Array.from(doc.querySelectorAll('.item-subject')).map(
+          (el) => ({
+            text: el.innerText.trim(), // 제목도 같이 저장
+            href: el.getAttribute('href'),
+          }),
         );
-        page++;
-        await new Promise((r) => setTimeout(r, 200));
+
+        // 한 페이지 내에서는 최신순(위) -> 과거순(아래)이므로
+        // 과거 -> 최신 순서로 맞추기 위해 reverse()
+        links.reverse();
+
+        collected.push(...links);
+
+        await new Promise((r) => setTimeout(r, 200)); // 차단 방지
       } catch (e) {
-        log(`❌ \uc624\ub958: ${e.message}`);
-        break;
+        log(`❌ 오류 (Page ${page}): ${e.message}`);
       }
     }
 
-    state.allLinks = Array.from(collected);
-    // 역순 정렬 (1화부터 받으려면) - 필요시 주석 해제
-    // state.allLinks.reverse();
+    state.allLinks = collected;
 
-    document.getElementById('step-scan').style.display = 'none';
+    // UI 전환
+    document.getElementById('step-setup').style.display = 'none';
     document.getElementById('step-download').style.display = 'block';
-    document.getElementById('count-total').innerText = state.allLinks.length;
+    document.getElementById('found-count').innerText = state.allLinks.length;
     document.getElementById('range-end').value = state.allLinks.length;
-    log(`✅ \ucd1d ${state.allLinks.length}\uac1c \uc900\ube44 \uc644\ub8cc.`);
+    log(`✅ 스캔 완료! 총 ${state.allLinks.length}화 발견.`);
   };
 
-  const startDownload = async () => {
+  // 3. 다운로드 로직 (Reference: cleanText 적용)
+  const downloadEpisodes = async () => {
     const startIdx = parseInt(document.getElementById('range-start').value) - 1;
     const endIdx = parseInt(document.getElementById('range-end').value);
-    const speed = parseFloat(document.getElementById('speed').value) * 1000;
+    const speed = parseFloat(document.getElementById('dl-speed').value) * 1000;
 
-    state.downloadQueue = state.allLinks.slice(startIdx, endIdx);
+    const targets = state.allLinks.slice(startIdx, endIdx);
     state.downloadedText = [];
 
     const btnStart = document.getElementById('btn-start');
     const btnPause = document.getElementById('btn-pause');
     const btnResume = document.getElementById('btn-resume');
-    const btnSave = document.getElementById('btn-save');
 
     btnStart.style.display = 'none';
     btnPause.style.display = 'block';
 
-    log(`🚀 \ub2e4\uc6b4\ub85c\ub4dc \uc2dc\uc791!`);
-
-    for (let i = 0; i < state.downloadQueue.length; i++) {
+    for (let i = 0; i < targets.length; i++) {
       while (state.isPaused) {
-        log('⏸ \uc77c\uc2dc\uc815\uc9c0...');
+        log('⏸ 일시정지됨');
         btnPause.style.display = 'none';
         btnResume.style.display = 'block';
         await new Promise((r) => setTimeout(r, 1000));
@@ -205,77 +200,60 @@
       btnResume.style.display = 'none';
       btnPause.style.display = 'block';
 
-      const url = state.downloadQueue[i];
+      const ep = targets[i];
       const displayNum = startIdx + i + 1;
 
+      log(`⬇ [${displayNum}/${endIdx}] 다운로드 중...`);
+
       try {
-        const res = await fetch(url);
-        if (
-          res.url.includes('captcha') ||
-          res.status === 403 ||
-          res.status === 429
-        ) {
-          throw new Error('\ucc28\ub2e8/\ucea1\ucc28');
-        }
+        const res = await fetch(ep.href);
+        // 캡차 감지
+        if (!res.ok || res.url.includes('captcha'))
+          throw new Error('캡차/차단 감지');
 
-        const text = await res.text();
+        const html = await res.text();
         const parser = new DOMParser();
-        const doc = parser.parseFromString(text, 'text/html');
+        const doc = parser.parseFromString(html, 'text/html');
 
-        const title =
-          doc.querySelector(CONFIG.titleSelector)?.textContent.trim() ||
-          `${displayNum}\ud654`;
-        const contentEl = doc.querySelector(CONFIG.contentSelector);
+        // Reference Selector: #novel_content
+        const contentEl = doc.querySelector('#novel_content');
 
-        if (!contentEl) {
-          log(`⚠️ \ubcf8\ubb38 \uc5c6\uc74c: ${url}`);
-          state.downloadedText.push(`\n\n=== ${title} (Skip) ===\n\n`);
+        if (contentEl) {
+          const cleanBody = cleanText(contentEl.innerHTML);
+          // 제목 + 본문 합치기
+          state.downloadedText.push(`\n\n=== ${ep.text} ===\n\n${cleanBody}`);
         } else {
-          let content = contentEl.innerHTML;
-          content = content.replace(/<br\s*\/?>/gi, '\n');
-          content = content.replace(/<\/p>/gi, '\n\n');
-          const temp = document.createElement('div');
-          temp.innerHTML = content;
-          state.downloadedText.push(
-            `\n\n=== ${title} ===\n\n${temp.textContent.trim()}`,
-          );
-          log(`⬇ [${displayNum}] ${title}`);
+          log(`⚠️ 본문 없음: ${ep.text}`);
         }
+
         await new Promise((r) => setTimeout(r, speed));
       } catch (e) {
-        log(`⛔ \uc624\ub958: ${e.message}`);
+        log(`⛔ 오류: ${e.message}`);
         state.isPaused = true;
-        i--;
+        i--; // 재시도
       }
     }
-    log('🎉 \ubaa8\ub4e0 \uc791\uc5c5 \uc644\ub8cc!');
+
+    log('🎉 완료! 저장 버튼을 누르세요.');
     btnPause.style.display = 'none';
-    btnSave.style.display = 'block';
+    document.getElementById('btn-save').style.display = 'block';
   };
 
+  // 버튼 이벤트
   document.getElementById('btn-close').onclick = () => ui.remove();
-  document.getElementById('btn-scan').onclick = startScan;
-  document.getElementById('btn-start').onclick = startDownload;
-  document.getElementById('btn-pause').onclick = () => {
-    state.isPaused = true;
-  };
-  document.getElementById('btn-resume').onclick = () => {
-    state.isPaused = false;
-  };
-
+  document.getElementById('btn-scan').onclick = scanEpisodes;
+  document.getElementById('btn-start').onclick = downloadEpisodes;
+  document.getElementById('btn-pause').onclick = () => (state.isPaused = true);
+  document.getElementById('btn-resume').onclick = () =>
+    (state.isPaused = false);
   document.getElementById('btn-save').onclick = () => {
-    if (state.downloadedText.length === 0)
-      return alert('\ub0b4\uc6a9 \uc5c6\uc74c');
+    if (state.downloadedText.length === 0) return alert('내용 없음');
     const blob = new Blob([state.downloadedText.join('\n')], {
       type: 'text/plain',
     });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `Novel_Full.txt`;
-    document.body.appendChild(a);
+    a.download = 'Novel_Merged.txt'; // 통합 txt 파일
     a.click();
-    document.body.removeChild(a);
   };
-
-  log('Engine Loaded. (SPAGE Fixed)');
 })();
