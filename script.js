@@ -1,7 +1,7 @@
-/* * Novel Downloader (V25: Enhanced 69shuba DOM Parser)
- * 1. 69shuba 목차 페이지 상세 분석 및 파서 강화 (#catalog, .catalog, li a 패턴 지원)
- * 2. 캡차/403 예외 처리 및 자동 일시정지 분리
- * 3. IndexedDB 실시간 자동 저장 적용
+/* * Novel Downloader (V26: 69shuba catalog filtering & deduplication)
+ * 1. 69shuba 정규 목차(#catalog 또는 .catalog-all) 정밀 분석
+ * 2. 상단 노이즈(북마크, 최신 업데이트 요약본) 강제 필터링 제거
+ * 3. IndexedDB 실시간 자동 저장 및 이어받기 지원
  */
 
 (function () {
@@ -19,7 +19,7 @@
       request.onupgradeneeded = (e) => {
         const database = e.target.result;
         if (!database.objectStoreNames.contains(STORE_NAME)) {
-          database.createObjectStore(STORE_NAME, { keyPath: "id", autoIncrement: true });
+          database.createStore = database.createObjectStore(STORE_NAME, { keyPath: "id", autoIncrement: true });
         }
       };
       request.onsuccess = (e) => {
@@ -55,7 +55,7 @@
     });
   };
 
-  // DB 초기화 (수집 완료 후 저장했을 때 비우기용)
+  // DB 초기화
   const clearNovelDB = (novelKey) => {
     return new Promise((resolve) => {
       const transaction = db.transaction([STORE_NAME], "readwrite");
@@ -75,7 +75,7 @@
     });
   };
 
-  // --- 메타 데이터 및 텍스트 파싱 로직 (69shuba 타겟) ---
+  // --- 메타 데이터 및 텍스트 파싱 로직 ---
   const getNovelTitle = () => {
     try {
       const meta = document.querySelector('meta[property="og:novel:book_name"]');
@@ -89,20 +89,20 @@
 
   const cleanText = (text) => {
     text = text
-      .replace(/<script[^>]*>([\s\S]*?)<\/script>/gi, '') // 스크립트 제거
-      .replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, '')   // 스타일 제거
+      .replace(/<script[^>]*>([\s\S]*?)<\/script>/gi, '') 
+      .replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, '')   
       .replace(/<div[^>]*>/gi, '\n')
       .replace(/<\/div>/gi, '\n')
       .replace(/<p[^>]*>/gi, '\n')
       .replace(/<\/p>/gi, '\n')
       .replace(/<br\s*[/]?>/gi, '\n')
-      .replace(/<[^>]*>/g, '') // 나머지 HTML 태그 모두 제거
+      .replace(/<[^>]*>/g, '') 
       .replace(/ {2,}/g, ' ');
 
     return text
       .split('\n')
       .map((line) => line.trim())
-      .filter((line) => line.length > 0 && !line.includes('www.69shuba.com') && !line.includes('69书吧')) // 광고 문구 제거
+      .filter((line) => line.length > 0 && !line.includes('www.69shuba.com') && !line.includes('69书吧')) 
       .join('\n\n');
   };
 
@@ -112,7 +112,7 @@
     allLinks: [],
     novelTitle: getNovelTitle(),
     realEndIndex: 0,
-    novelKey: window.location.pathname.replace(/\/$/, "").split('/').pop() || 'default_novel_key' // 소설 고유 번호 (예: 47135)
+    novelKey: window.location.pathname.replace(/\/$/, "").split('/').pop() || 'default_novel_key' 
   };
 
   // --- UI 빌더 ---
@@ -143,7 +143,7 @@
 
         <div style="border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between;">
             <div style="width: 85%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">
-                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V25: 69shuba (파서 긴급강화)</h3>
+                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V26: 69shuba (정밀 목차 정렬)</h3>
             </div>
             <button id="btn-close" style="background:none; border:none; color:#fff; cursor:pointer;">✕</button>
         </div>
@@ -200,30 +200,48 @@
     }
   }).catch(e => log(`DB 에러: ${e.message}`));
 
-  // --- 목차 스캔 로직 (69shuba 목차 페이지 전용 보완) ---
+  // --- [핵심 수정] 목차 스캔 로직 (노이즈 필터링 강화) ---
   const scanEpisodes = async () => {
     document.getElementById('btn-scan').disabled = true;
     log(`🚀 목차 스캔 시작...`);
 
     try {
-      // 69shuba의 다양한 목차 컨테이너 선택자를 모두 대입해 확인합니다.
-      let container = document.querySelector('#catalog, .catalog, .catalog-list, .p_list, #articlesList');
-      let links = [];
+      // 69shuba의 정규 목차 리스트(catalog)만 강제로 타겟팅합니다.
+      // '.catalog-all ul', '.catalog-list ul' 혹은 '#catalog ul' 내부의 링크만 선별
+      let container = document.querySelector('.catalog-all ul, #catalog ul, .catalog-list ul, .p_list ul');
+      let rawLinks = [];
 
       if (container) {
-        links = Array.from(container.querySelectorAll('li a, dd a'));
+        rawLinks = Array.from(container.querySelectorAll('li a'));
       } else {
-        // 컨테이너를 못 찾을 시, 페이지 내부의 모든 장 링크(일반적으로 html로 끝나는 경로) 수집 시도
-        links = Array.from(document.querySelectorAll('a')).filter(a => {
-          const href = a.getAttribute('href') || '';
-          return href.endsWith('.htm') || href.endsWith('.html') || /\/txt\/\d+\/\d+/.test(href);
-        });
+        // 백업용 광범위 수집
+        rawLinks = Array.from(document.querySelectorAll('a'));
       }
 
-      let parsedLinks = links.map((el) => ({
-        text: el.innerText.trim(),
-        href: el.getAttribute('href'),
-      })).filter(link => link.text && link.href && !link.text.includes("원문") && !link.text.includes("목차"));
+      let parsedLinks = rawLinks.map((el) => {
+        const text = el.innerText ? el.innerText.trim() : "";
+        const href = el.getAttribute('href') || "";
+        return { text, href };
+      });
+
+      // 정밀 필터링 시작
+      parsedLinks = parsedLinks.filter(link => {
+        if (!link.text || !link.href) return false;
+        
+        // 1. 제외할 노이즈 텍스트 패턴 (북마크, 최신장, 제목 등 가짜 링크)
+        const blockKeywords = ["书签", "最新章节", "目录", "加入书架", "推荐", "返回", "电脑版", "手机版", "最新", "원문"];
+        const hasBlockWord = blockKeywords.some(word => link.text.includes(word));
+        if (hasBlockWord) return false;
+
+        // 2. 69shuba의 실제 소설 챕터 링크는 대개 .htm 또는 .html로 끝나는 수식어 형식입니다.
+        const isValidHref = link.href.endsWith('.htm') || link.href.endsWith('.html') || /\/txt\/\d+\/\d+/.test(link.href);
+        if (!isValidHref) return false;
+
+        // 3. 챕터 형태 정렬 (제X장, 제X화 등으로 시작하거나 숫자를 포함하는지 점검)
+        const hasChapterPattern = /第?\s*\d+\s*[章|话|화|回]/g.test(link.text) || link.text.startsWith("第");
+        
+        return hasChapterPattern;
+      });
 
       // 상대경로 -> 절대경로 보정
       parsedLinks = parsedLinks.map(link => {
@@ -233,7 +251,7 @@
         return link;
       });
 
-      // 중복 링크 제거
+      // 링크 기반 완벽 중복 제거
       const uniqueLinks = [];
       const seen = new Set();
       for (const link of parsedLinks) {
@@ -244,8 +262,12 @@
       }
 
       if (uniqueLinks.length === 0) {
-        throw new Error("목차 링크를 찾을 수 없습니다. 현재 페이지가 소설 소개/목차 화면이 맞는지 확인해 주세요.");
+        throw new Error("목차 링크를 찾을 수 없습니다. 현재 페이지가 소설 메인 목차 화면이 맞는지 다시 확인해 주세요.");
       }
+
+      // 첫 장 확인용 샘플 로그 출력
+      log(`확인된 첫 챕터: ${uniqueLinks[0].text}`);
+      log(`확인된 마지막 챕터: ${uniqueLinks[uniqueLinks.length - 1].text}`);
 
       state.allLinks = uniqueLinks;
       document.getElementById('step-setup').style.display = 'none';
@@ -253,15 +275,15 @@
       document.getElementById('found-count').innerText = state.allLinks.length;
       document.getElementById('range-end').value = state.allLinks.length;
 
-      // DB 이력 확인 및 이어받기 추천 세팅
+      // DB 이력 확인 및 이어받기 세팅
       const saved = await loadChaptersFromDB(state.novelKey);
       if (saved.length > 0) {
         const nextTargetNum = saved.length + 1;
         document.getElementById('range-start').value = Math.min(nextTargetNum, state.allLinks.length);
-        log(`💡 이전에 ${saved.length}화까지 수집했습니다. ${nextTargetNum}화부터 이어받기를 권장합니다.`);
+        log(`💡 이전에 ${saved.length}화까지 수집했습니다. ${nextTargetNum}화부터 이어받기를 추천합니다.`);
       }
 
-      log(`✅ 완료! 총 ${state.allLinks.length}화 탐색됨.`);
+      log(`✅ 완료! 실제 총 ${state.allLinks.length}화 탐색됨.`);
     } catch (e) {
       log(`❌ 오류: ${e.message}`);
       document.getElementById('btn-scan').disabled = false;
@@ -284,7 +306,6 @@
     for (let i = 0; i < targets.length; i++) {
       if (stopFlag) break;
 
-      // 일시정지 루프 대기
       while (state.isPaused) {
         log('⏸ 일시정지 대기 중...');
         document.getElementById('btn-pause').style.display = 'none';
@@ -297,7 +318,6 @@
       const ep = targets[i];
       const displayNum = startIdx + i + 1;
 
-      // 도메인 과부하 방지 안전장치 (매 30화마다 8초 휴식)
       if (i > 0 && i % 30 === 0) {
         log(`☕ 과열 방지 휴식 중... (8초)`);
         await new Promise((r) => setTimeout(r, 8000));
@@ -308,7 +328,6 @@
       try {
         const res = await fetch(ep.href);
 
-        // 캡차 예외 처리
         if (
           res.url.includes('captcha') ||
           res.url.includes('challenge') ||
@@ -317,7 +336,6 @@
           throw new Error('CAPTCHA_DETECTED');
         }
 
-        // 403 / 429 차단 처리
         if (res.status === 403 || res.status === 429) {
           throw new Error('403_BLOCKED');
         }
@@ -325,16 +343,13 @@
         const html = await res.text();
         const doc = new DOMParser().parseFromString(html, 'text/html');
         
-        // 69shuba 본문 영역 (.txtnav 또는 .txtnav 클래스 내부의 다양한 컨텍스트 수집)
         const contentEl = doc.querySelector('.txtnav, #txtnav, .showtxt, #content');
 
         if (contentEl) {
           const cleanBody = cleanText(contentEl.innerHTML);
-          
-          // 수집 즉시 IndexedDB 백업 저장
           await saveChapterToDB(state.novelKey, displayNum, cleanBody, ep.text);
         } else {
-          log(`⚠️ 본문 영역(.txtnav) 탐색 실패: ${ep.text}`);
+          log(`⚠️ 본문 영역 탐색 실패: ${ep.text}`);
         }
 
         const randomJitter = Math.random() * 1000;
@@ -346,7 +361,7 @@
           alert(`[보안 캡차 감지]\n동작이 일시정지됩니다.\n새 탭으로 해당 주소(${ep.href})에 접속하셔서 보안 확인을 마치신 뒤 [재개]를 클릭하세요.`);
           window.open(ep.href, '_blank');
           state.isPaused = true;
-          i--; // 현재 인덱스 재시도
+          i--; 
         } else if (e.message === '403_BLOCKED') {
           log(`⛔ 403 / 429 IP가 완전히 차단당했습니다. 작업을 임시 종료합니다.`);
           alert(`[접근 거부 차단]\n일시적으로 해당 사이트 접근이 금지되었습니다.\n현재까지 수집 완료된 파일만 통합하여 다운로드할 수 있습니다.`);
@@ -359,7 +374,6 @@
       }
     }
 
-    // 마감 UI 처리
     document.getElementById('btn-pause').style.display = 'none';
     document.getElementById('btn-save').style.display = 'block';
     document.getElementById('btn-clear-db').style.display = 'block';
@@ -384,7 +398,6 @@
 
     log("📝 수집된 전 장 통합 컴파일 및 텍스트 렌더링 중...");
     
-    // 포맷팅 통합
     const compiledText = savedList.map(item => `\n\n=== ${item.title} ===\n\n${item.text}`).join('\n');
     
     let safeTitle = state.novelTitle.replace(/[\\/:*?"<>|]/g, '_');
