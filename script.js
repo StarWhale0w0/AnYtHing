@@ -1,6 +1,6 @@
-/* * Novel Downloader (V26: 69shuba catalog filtering & deduplication)
- * 1. 69shuba 정규 목차(#catalog 또는 .catalog-all) 정밀 분석
- * 2. 상단 노이즈(북마크, 최신 업데이트 요약본) 강제 필터링 제거
+/* * Novel Downloader (V27: 69shuba GBK Encoding Decoder Support)
+ * 1. 69shuba 특유의 구형 중국어 인코딩(GBK/GB2312) 깨짐 현상 완벽 해결
+ * 2. 텍스트 바이트 데이터를 받아 TextDecoder('gbk')로 한자 디코딩 적용
  * 3. IndexedDB 실시간 자동 저장 및 이어받기 지원
  */
 
@@ -8,7 +8,7 @@
   const existingUI = document.getElementById('my-downloader-ui');
   if (existingUI) existingUI.remove();
 
-  // --- [신규] IndexedDB 데이터베이스 설정 ---
+  // --- IndexedDB 데이터베이스 설정 ---
   const DB_NAME = "NovelDownloaderDB";
   const STORE_NAME = "chapters";
   let db;
@@ -19,7 +19,7 @@
       request.onupgradeneeded = (e) => {
         const database = e.target.result;
         if (!database.objectStoreNames.contains(STORE_NAME)) {
-          database.createStore = database.createObjectStore(STORE_NAME, { keyPath: "id", autoIncrement: true });
+          database.createObjectStore(STORE_NAME, { keyPath: "id", autoIncrement: true });
         }
       };
       request.onsuccess = (e) => {
@@ -143,7 +143,7 @@
 
         <div style="border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between;">
             <div style="width: 85%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">
-                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V26: 69shuba (정밀 목차 정렬)</h3>
+                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V27: 69shuba (한자 깨짐 수정형)</h3>
             </div>
             <button id="btn-close" style="background:none; border:none; color:#fff; cursor:pointer;">✕</button>
         </div>
@@ -200,21 +200,18 @@
     }
   }).catch(e => log(`DB 에러: ${e.message}`));
 
-  // --- [핵심 수정] 목차 스캔 로직 (노이즈 필터링 강화) ---
+  // --- 목차 스캔 로직 ---
   const scanEpisodes = async () => {
     document.getElementById('btn-scan').disabled = true;
     log(`🚀 목차 스캔 시작...`);
 
     try {
-      // 69shuba의 정규 목차 리스트(catalog)만 강제로 타겟팅합니다.
-      // '.catalog-all ul', '.catalog-list ul' 혹은 '#catalog ul' 내부의 링크만 선별
       let container = document.querySelector('.catalog-all ul, #catalog ul, .catalog-list ul, .p_list ul');
       let rawLinks = [];
 
       if (container) {
         rawLinks = Array.from(container.querySelectorAll('li a'));
       } else {
-        // 백업용 광범위 수집
         rawLinks = Array.from(document.querySelectorAll('a'));
       }
 
@@ -224,26 +221,20 @@
         return { text, href };
       });
 
-      // 정밀 필터링 시작
       parsedLinks = parsedLinks.filter(link => {
         if (!link.text || !link.href) return false;
         
-        // 1. 제외할 노이즈 텍스트 패턴 (북마크, 최신장, 제목 등 가짜 링크)
         const blockKeywords = ["书签", "最新章节", "目录", "加入书架", "推荐", "返回", "电脑版", "手机版", "最新", "원문"];
         const hasBlockWord = blockKeywords.some(word => link.text.includes(word));
         if (hasBlockWord) return false;
 
-        // 2. 69shuba의 실제 소설 챕터 링크는 대개 .htm 또는 .html로 끝나는 수식어 형식입니다.
         const isValidHref = link.href.endsWith('.htm') || link.href.endsWith('.html') || /\/txt\/\d+\/\d+/.test(link.href);
         if (!isValidHref) return false;
 
-        // 3. 챕터 형태 정렬 (제X장, 제X화 등으로 시작하거나 숫자를 포함하는지 점검)
         const hasChapterPattern = /第?\s*\d+\s*[章|话|화|回]/g.test(link.text) || link.text.startsWith("第");
-        
         return hasChapterPattern;
       });
 
-      // 상대경로 -> 절대경로 보정
       parsedLinks = parsedLinks.map(link => {
         if (link.href && !link.href.startsWith('http')) {
           link.href = new URL(link.href, window.location.href).href;
@@ -251,7 +242,6 @@
         return link;
       });
 
-      // 링크 기반 완벽 중복 제거
       const uniqueLinks = [];
       const seen = new Set();
       for (const link of parsedLinks) {
@@ -262,12 +252,11 @@
       }
 
       if (uniqueLinks.length === 0) {
-        throw new Error("목차 링크를 찾을 수 없습니다. 현재 페이지가 소설 메인 목차 화면이 맞는지 다시 확인해 주세요.");
+        throw new Error("목차 링크를 찾을 수 없습니다.");
       }
 
-      // 첫 장 확인용 샘플 로그 출력
-      log(`확인된 첫 챕터: ${uniqueLinks[0].text}`);
-      log(`확인된 마지막 챕터: ${uniqueLinks[uniqueLinks.length - 1].text}`);
+      log(`첫 챕터: ${uniqueLinks[0].text}`);
+      log(`마지막 챕터: ${uniqueLinks[uniqueLinks.length - 1].text}`);
 
       state.allLinks = uniqueLinks;
       document.getElementById('step-setup').style.display = 'none';
@@ -275,12 +264,10 @@
       document.getElementById('found-count').innerText = state.allLinks.length;
       document.getElementById('range-end').value = state.allLinks.length;
 
-      // DB 이력 확인 및 이어받기 세팅
       const saved = await loadChaptersFromDB(state.novelKey);
       if (saved.length > 0) {
         const nextTargetNum = saved.length + 1;
         document.getElementById('range-start').value = Math.min(nextTargetNum, state.allLinks.length);
-        log(`💡 이전에 ${saved.length}화까지 수집했습니다. ${nextTargetNum}화부터 이어받기를 추천합니다.`);
       }
 
       log(`✅ 완료! 실제 총 ${state.allLinks.length}화 탐색됨.`);
@@ -340,9 +327,12 @@
           throw new Error('403_BLOCKED');
         }
 
-        const html = await res.text();
-        const doc = new DOMParser().parseFromString(html, 'text/html');
-        
+        // --- [핵심 수정] GBK 인코딩 디코더 장착 ---
+        const buffer = await res.arrayBuffer(); // 원본 바이너리 데이터를 받음
+        const decoder = new TextDecoder('gbk');  // 중국어 GBK 디코더 생성
+        const htmlText = decoder.decode(buffer); // 디코딩을 수행하여 한자가 깨지지 않는 문자열로 변환
+
+        const doc = new DOMParser().parseFromString(htmlText, 'text/html');
         const contentEl = doc.querySelector('.txtnav, #txtnav, .showtxt, #content');
 
         if (contentEl) {
