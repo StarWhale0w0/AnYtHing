@@ -1,7 +1,7 @@
-/* * Novel Downloader (V27: 69shuba GBK Encoding Decoder Support)
- * 1. 69shuba 특유의 구형 중국어 인코딩(GBK/GB2312) 깨짐 현상 완벽 해결
- * 2. 텍스트 바이트 데이터를 받아 TextDecoder('gbk')로 한자 디코딩 적용
- * 3. IndexedDB 실시간 자동 저장 및 이어받기 지원
+/* * Novel Downloader (V28: Auto Encoding Detection & Range-Strict Saver)
+ * 1. 동적 인코딩 감지: UTF-8과 GBK를 자동 감지 및 교차 처리하여 한자 깨짐 완벽 해결
+ * 2. 엄격한 구간 다운로드: 설정한 [시작 ~ 끝] 구간의 챕터만 DB에서 호출하여 정확한 파일명 생성 및 수집
+ * 3. IndexedDB 실시간 복구 및 이어받기 지원
  */
 
 (function () {
@@ -35,7 +35,8 @@
     return new Promise((resolve) => {
       const transaction = db.transaction([STORE_NAME], "readwrite");
       const store = transaction.objectStore(STORE_NAME);
-      store.put({ novelKey, index, text, title });
+      // novelKey_index를 고유식별자로 삼아 덮어쓰기 처리(동일구간 중복 방지)
+      store.put({ id: `${novelKey}_${index}`, novelKey, index, text, title });
       transaction.oncomplete = () => resolve();
     });
   };
@@ -55,7 +56,7 @@
     });
   };
 
-  // DB 초기화
+  // DB 특정 소설 데이터 초기화
   const clearNovelDB = (novelKey) => {
     return new Promise((resolve) => {
       const transaction = db.transaction([STORE_NAME], "readwrite");
@@ -143,7 +144,7 @@
 
         <div style="border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between;">
             <div style="width: 85%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">
-                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V27: 69shuba (한자 깨짐 수정형)</h3>
+                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V28: 69shuba (스마트 버그픽스형)</h3>
             </div>
             <button id="btn-close" style="background:none; border:none; color:#fff; cursor:pointer;">✕</button>
         </div>
@@ -179,7 +180,7 @@
             제목: ${state.novelTitle}<br>데이터베이스 초기화 중...
         </div>
 
-        <button id="btn-save" style="width:100%; margin-top:10px; padding:12px; background:#FF9800; color:white; border:none; border-radius:4px; font-weight:bold; display:none;">💾 수집 데이터 통합 저장</button>
+        <button id="btn-save" style="width:100%; margin-top:10px; padding:12px; background:#FF9800; color:white; border:none; border-radius:4px; font-weight:bold; display:none;">💾 수집한 구간 저장하기</button>
         <button id="btn-clear-db" style="width:100%; margin-top:5px; padding:6px; background:#555; color:#ccc; border:none; border-radius:4px; font-size:11px; display:none;">저장소 기록 완전히 지우기 (초기화)</button>
     `;
   document.body.appendChild(ui);
@@ -231,7 +232,7 @@
         const isValidHref = link.href.endsWith('.htm') || link.href.endsWith('.html') || /\/txt\/\d+\/\d+/.test(link.href);
         if (!isValidHref) return false;
 
-        const hasChapterPattern = /第?\s*\d+\s*[章|话|화|回]/g.test(link.text) || link.text.startsWith("第");
+        const hasChapterPattern = /第?\s*\d+\s*[章|话|화|回]/g.test(link.text) || link.text.startsWith("get");
         return hasChapterPattern;
       });
 
@@ -327,10 +328,28 @@
           throw new Error('403_BLOCKED');
         }
 
-        // --- [핵심 수정] GBK 인코딩 디코더 장착 ---
-        const buffer = await res.arrayBuffer(); // 원본 바이너리 데이터를 받음
-        const decoder = new TextDecoder('gbk');  // 중국어 GBK 디코더 생성
-        const htmlText = decoder.decode(buffer); // 디코딩을 수행하여 한자가 깨지지 않는 문자열로 변환
+        // --- [핵심 수정 1] 동적 디코딩 로직 설계 ---
+        const buffer = await res.arrayBuffer();
+        
+        // 1. HTTP 헤더의 content-type 및 charset 체크 시도
+        const contentType = res.headers.get("content-type") || "";
+        let encoding = 'utf-8'; // 기본 디폴트는 UTF-8
+        
+        if (contentType.toLowerCase().includes("gbk") || contentType.toLowerCase().includes("gb2312")) {
+          encoding = 'gbk';
+        } else {
+          // 헤더 정보가 미흡할 경우, 바이트 코드를 분석해 UTF-8이 완벽히 아닐 때에만 gbk로 우회 해독
+          try {
+            const tempDecoder = new TextDecoder('utf-8', { fatal: true });
+            tempDecoder.decode(buffer);
+            encoding = 'utf-8';
+          } catch (e) {
+            encoding = 'gbk'; // UTF-8로 컴파일 도중 fatal 에러(유효하지 않은 바이트)가 발생하면 GBK로 전환
+          }
+        }
+
+        const decoder = new TextDecoder(encoding);
+        const htmlText = decoder.decode(buffer);
 
         const doc = new DOMParser().parseFromString(htmlText, 'text/html');
         const contentEl = doc.querySelector('.txtnav, #txtnav, .showtxt, #content');
@@ -378,17 +397,27 @@
     }
   };
 
-  // --- 통합 저장 및 파일 다운로드 ---
+  // --- [핵심 수정 2] 수동/자동 입력 범위 기반 엄격한 다운로드 ---
   const compileAndSave = async () => {
+    const startNum = parseInt(document.getElementById('range-start').value);
+    const endNum = parseInt(document.getElementById('range-end').value);
+
+    if (isNaN(startNum) || isNaN(endNum) || startNum > endNum) {
+      return alert('다운로드 구간 범위 설정이 잘못되었습니다.');
+    }
+
     const savedList = await loadChaptersFromDB(state.novelKey);
-    if (savedList.length === 0) return alert('저장소에 보존된 소설 텍스트가 존재하지 않습니다.');
-
-    const startNum = savedList[0].index;
-    const endNum = savedList[savedList.length - 1].index;
-
-    log("📝 수집된 전 장 통합 컴파일 및 텍스트 렌더링 중...");
     
-    const compiledText = savedList.map(item => `\n\n=== ${item.title} ===\n\n${item.text}`).join('\n');
+    // DB의 방대한 이전 캐시 중 현재 사용자가 선택한 [시작 ~ 끝] 구간 데이터만 정확히 필터링합니다.
+    const strictRangeList = savedList.filter(item => item.index >= startNum && item.index <= endNum);
+
+    if (strictRangeList.length === 0) {
+      return alert('설정한 구간 범위에 해당하는 저장 데이터가 로컬에 존재하지 않습니다.');
+    }
+
+    log(`📝 선택구간 [${startNum}화 ~ ${endNum}화] 통합 컴파일 렌더링 중...`);
+    
+    const compiledText = strictRangeList.map(item => `\n\n=== ${item.title} ===\n\n${item.text}`).join('\n');
     
     let safeTitle = state.novelTitle.replace(/[\\/:*?"<>|]/g, '_');
     const filename = `${safeTitle} ${startNum}-${endNum}.txt`;
@@ -404,7 +433,7 @@
 
   // --- 수동 데이터베이스 청소 ---
   const handleClearDB = async () => {
-    if (confirm("이 소설의 수집 중이던 임시 데이터를 브라우저 저장소에서 완전히 지우시겠습니까?\n(수집 완료 후 안전하게 새 작업을 시작할 때 사용하세요.)")) {
+    if (confirm("이 소설의 수집 중이던 임시 데이터를 브라우저 저장소에서 완전히 지우시겠습니까?")) {
       await clearNovelDB(state.novelKey);
       log("🧹 로컬 임시 저장소가 완전 초기화되었습니다.");
       document.getElementById('saved-info').innerText = "";
