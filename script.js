@@ -1,7 +1,7 @@
-/* * Novel Downloader (V24: IndexedDB Auto-Save & Resume for 69shuba)
- * 1. 69shuba 전용 HTML 파서 탑재
+/* * Novel Downloader (V25: Enhanced 69shuba DOM Parser)
+ * 1. 69shuba 목차 페이지 상세 분석 및 파서 강화 (#catalog, .catalog, li a 패턴 지원)
  * 2. 캡차/403 예외 처리 및 자동 일시정지 분리
- * 3. IndexedDB 실시간 자동 저장 적용 -> 중단 시 언제든 이어서 수집 가능
+ * 3. IndexedDB 실시간 자동 저장 적용
  */
 
 (function () {
@@ -80,7 +80,8 @@
     try {
       const meta = document.querySelector('meta[property="og:novel:book_name"]');
       if (meta) return meta.content.trim();
-      const h1 = document.querySelector('.booknav2 h1 a, h1');
+      
+      const h1 = document.querySelector('.booknav2 h1 a, h1, .book-info h1');
       if (h1) return h1.innerText.replace('最新章节', '').trim();
     } catch (e) {}
     return '69shuba_Novel';
@@ -111,7 +112,7 @@
     allLinks: [],
     novelTitle: getNovelTitle(),
     realEndIndex: 0,
-    novelKey: window.location.pathname.split('/')[1] || 'default_novel_key' // 소설 고유 식별키
+    novelKey: window.location.pathname.replace(/\/$/, "").split('/').pop() || 'default_novel_key' // 소설 고유 번호 (예: 47135)
   };
 
   // --- UI 빌더 ---
@@ -142,7 +143,7 @@
 
         <div style="border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between;">
             <div style="width: 85%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">
-                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V24: 69shuba (자동복구 탑재)</h3>
+                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V25: 69shuba (파서 긴급강화)</h3>
             </div>
             <button id="btn-close" style="background:none; border:none; color:#fff; cursor:pointer;">✕</button>
         </div>
@@ -199,39 +200,60 @@
     }
   }).catch(e => log(`DB 에러: ${e.message}`));
 
-  // --- 목차 스캔 로직 (69shuba 목차 페이지에서 작동) ---
+  // --- 목차 스캔 로직 (69shuba 목차 페이지 전용 보완) ---
   const scanEpisodes = async () => {
     document.getElementById('btn-scan').disabled = true;
     log(`🚀 목차 스캔 시작...`);
 
     try {
-      // 69shuba의 책 메인페이지에서 목차 리스트 가져오기 (ul.p_list의 li a 구조 등)
-      let links = Array.from(document.querySelectorAll('.catalog-list ul li a, .catalog-list li a, .p_list li a')).map(
-        (el) => ({
-          text: el.innerText.trim(),
-          href: el.getAttribute('href'),
-        })
-      );
+      // 69shuba의 다양한 목차 컨테이너 선택자를 모두 대입해 확인합니다.
+      let container = document.querySelector('#catalog, .catalog, .catalog-list, .p_list, #articlesList');
+      let links = [];
 
-      // 만약 상대경로라면 절대경로로 보정
-      links = links.map(link => {
+      if (container) {
+        links = Array.from(container.querySelectorAll('li a, dd a'));
+      } else {
+        // 컨테이너를 못 찾을 시, 페이지 내부의 모든 장 링크(일반적으로 html로 끝나는 경로) 수집 시도
+        links = Array.from(document.querySelectorAll('a')).filter(a => {
+          const href = a.getAttribute('href') || '';
+          return href.endsWith('.htm') || href.endsWith('.html') || /\/txt\/\d+\/\d+/.test(href);
+        });
+      }
+
+      let parsedLinks = links.map((el) => ({
+        text: el.innerText.trim(),
+        href: el.getAttribute('href'),
+      })).filter(link => link.text && link.href && !link.text.includes("원문") && !link.text.includes("목차"));
+
+      // 상대경로 -> 절대경로 보정
+      parsedLinks = parsedLinks.map(link => {
         if (link.href && !link.href.startsWith('http')) {
           link.href = new URL(link.href, window.location.href).href;
         }
         return link;
       });
 
-      if (links.length === 0) {
-        throw new Error("목차 링크를 찾을 수 없습니다. 소설 상세 정보/목차 화면에서 실행해 주세요.");
+      // 중복 링크 제거
+      const uniqueLinks = [];
+      const seen = new Set();
+      for (const link of parsedLinks) {
+        if (!seen.has(link.href)) {
+          seen.add(link.href);
+          uniqueLinks.push(link);
+        }
       }
 
-      state.allLinks = links;
+      if (uniqueLinks.length === 0) {
+        throw new Error("목차 링크를 찾을 수 없습니다. 현재 페이지가 소설 소개/목차 화면이 맞는지 확인해 주세요.");
+      }
+
+      state.allLinks = uniqueLinks;
       document.getElementById('step-setup').style.display = 'none';
       document.getElementById('step-download').style.display = 'block';
       document.getElementById('found-count').innerText = state.allLinks.length;
       document.getElementById('range-end').value = state.allLinks.length;
 
-      // 만약 DB에 이미 받아둔 이력이 있다면 그 다음화부터 기본값으로 채우기
+      // DB 이력 확인 및 이어받기 추천 세팅
       const saved = await loadChaptersFromDB(state.novelKey);
       if (saved.length > 0) {
         const nextTargetNum = saved.length + 1;
@@ -275,7 +297,7 @@
       const ep = targets[i];
       const displayNum = startIdx + i + 1;
 
-      // ⚠️ 도메인 과부하 방지 안전장치 (매 30화마다 8초 휴식)
+      // 도메인 과부하 방지 안전장치 (매 30화마다 8초 휴식)
       if (i > 0 && i % 30 === 0) {
         log(`☕ 과열 방지 휴식 중... (8초)`);
         await new Promise((r) => setTimeout(r, 8000));
@@ -303,20 +325,18 @@
         const html = await res.text();
         const doc = new DOMParser().parseFromString(html, 'text/html');
         
-        // 69shuba의 전형적인 소설 내용 박스인 .txtnav 클래스 파싱
-        const contentEl = doc.querySelector('.txtnav');
+        // 69shuba 본문 영역 (.txtnav 또는 .txtnav 클래스 내부의 다양한 컨텍스트 수집)
+        const contentEl = doc.querySelector('.txtnav, #txtnav, .showtxt, #content');
 
         if (contentEl) {
           const cleanBody = cleanText(contentEl.innerHTML);
           
-          // [핵심] 수집하자마자 IndexedDB에 즉시 동기화 저장
+          // 수집 즉시 IndexedDB 백업 저장
           await saveChapterToDB(state.novelKey, displayNum, cleanBody, ep.text);
-          
         } else {
           log(`⚠️ 본문 영역(.txtnav) 탐색 실패: ${ep.text}`);
         }
 
-        // 약간의 랜덤 딜레이 추가 (지연 일관성 회피)
         const randomJitter = Math.random() * 1000;
         await new Promise((r) => setTimeout(r, baseSpeed + randomJitter));
 
@@ -326,7 +346,7 @@
           alert(`[보안 캡차 감지]\n동작이 일시정지됩니다.\n새 탭으로 해당 주소(${ep.href})에 접속하셔서 보안 확인을 마치신 뒤 [재개]를 클릭하세요.`);
           window.open(ep.href, '_blank');
           state.isPaused = true;
-          i--; // 현재 인덱스 재도전
+          i--; // 현재 인덱스 재시도
         } else if (e.message === '403_BLOCKED') {
           log(`⛔ 403 / 429 IP가 완전히 차단당했습니다. 작업을 임시 종료합니다.`);
           alert(`[접근 거부 차단]\n일시적으로 해당 사이트 접근이 금지되었습니다.\n현재까지 수집 완료된 파일만 통합하여 다운로드할 수 있습니다.`);
