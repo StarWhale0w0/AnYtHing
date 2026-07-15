@@ -3,6 +3,8 @@
  * 2. 403 감지 시: 즉시 루프 종료 -> 현재까지 다운로드한 분량으로 파일명 생성 및 저장 유도
  */
 
+// 지금은 사용 x
+
 (function () {
   const existingUI = document.getElementById('my-downloader-ui');
   if (existingUI) existingUI.remove();
