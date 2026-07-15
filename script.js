@@ -1,7 +1,7 @@
-/* * Novel Downloader (V28: Auto Encoding Detection & Range-Strict Saver)
- * 1. 동적 인코딩 감지: UTF-8과 GBK를 자동 감지 및 교차 처리하여 한자 깨짐 완벽 해결
- * 2. 엄격한 구간 다운로드: 설정한 [시작 ~ 끝] 구간의 챕터만 DB에서 호출하여 정확한 파일명 생성 및 수집
- * 3. IndexedDB 실시간 복구 및 이어받기 지원
+/* * Novel Downloader (V29: UTF-8 BOM Force Injector)
+ * 1. UTF-8 BOM (\ufeff) 파일 내보내기 강제 주입 -> 윈도우 메모장, Notepad++ 인코딩 자동 인식 보장
+ * 2. 복합 디코딩 시스템 고도화: UTF-8 컴파일 오류 시 GBK 완벽 폴백
+ * 3. 저장소 중단 복구 및 구역 세션 분리형 컴파일 기능 탑재
  */
 
 (function () {
@@ -35,7 +35,6 @@
     return new Promise((resolve) => {
       const transaction = db.transaction([STORE_NAME], "readwrite");
       const store = transaction.objectStore(STORE_NAME);
-      // novelKey_index를 고유식별자로 삼아 덮어쓰기 처리(동일구간 중복 방지)
       store.put({ id: `${novelKey}_${index}`, novelKey, index, text, title });
       transaction.oncomplete = () => resolve();
     });
@@ -144,7 +143,7 @@
 
         <div style="border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between;">
             <div style="width: 85%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">
-                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V28: 69shuba (스마트 버그픽스형)</h3>
+                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V29: 69shuba (BOM 교정 완료형)</h3>
             </div>
             <button id="btn-close" style="background:none; border:none; color:#fff; cursor:pointer;">✕</button>
         </div>
@@ -232,7 +231,7 @@
         const isValidHref = link.href.endsWith('.htm') || link.href.endsWith('.html') || /\/txt\/\d+\/\d+/.test(link.href);
         if (!isValidHref) return false;
 
-        const hasChapterPattern = /第?\s*\d+\s*[章|话|화|回]/g.test(link.text) || link.text.startsWith("get");
+        const hasChapterPattern = /第?\s*\d+\s*[章|话|화|回]/g.test(link.text) || link.text.startsWith("第");
         return hasChapterPattern;
       });
 
@@ -328,23 +327,21 @@
           throw new Error('403_BLOCKED');
         }
 
-        // --- [핵심 수정 1] 동적 디코딩 로직 설계 ---
+        // --- 동적 인코딩 해독 ---
         const buffer = await res.arrayBuffer();
         
-        // 1. HTTP 헤더의 content-type 및 charset 체크 시도
         const contentType = res.headers.get("content-type") || "";
-        let encoding = 'utf-8'; // 기본 디폴트는 UTF-8
+        let encoding = 'utf-8';
         
         if (contentType.toLowerCase().includes("gbk") || contentType.toLowerCase().includes("gb2312")) {
           encoding = 'gbk';
         } else {
-          // 헤더 정보가 미흡할 경우, 바이트 코드를 분석해 UTF-8이 완벽히 아닐 때에만 gbk로 우회 해독
           try {
             const tempDecoder = new TextDecoder('utf-8', { fatal: true });
             tempDecoder.decode(buffer);
             encoding = 'utf-8';
           } catch (e) {
-            encoding = 'gbk'; // UTF-8로 컴파일 도중 fatal 에러(유효하지 않은 바이트)가 발생하면 GBK로 전환
+            encoding = 'gbk';
           }
         }
 
@@ -397,7 +394,7 @@
     }
   };
 
-  // --- [핵심 수정 2] 수동/자동 입력 범위 기반 엄격한 다운로드 ---
+  // --- 통합 저장 및 파일 다운로드 (★UTF-8 BOM 강제 보정 완료★) ---
   const compileAndSave = async () => {
     const startNum = parseInt(document.getElementById('range-start').value);
     const endNum = parseInt(document.getElementById('range-end').value);
@@ -407,8 +404,6 @@
     }
 
     const savedList = await loadChaptersFromDB(state.novelKey);
-    
-    // DB의 방대한 이전 캐시 중 현재 사용자가 선택한 [시작 ~ 끝] 구간 데이터만 정확히 필터링합니다.
     const strictRangeList = savedList.filter(item => item.index >= startNum && item.index <= endNum);
 
     if (strictRangeList.length === 0) {
@@ -417,12 +412,16 @@
 
     log(`📝 선택구간 [${startNum}화 ~ ${endNum}화] 통합 컴파일 렌더링 중...`);
     
+    // 포맷팅 통합
     const compiledText = strictRangeList.map(item => `\n\n=== ${item.title} ===\n\n${item.text}`).join('\n');
     
     let safeTitle = state.novelTitle.replace(/[\\/:*?"<>|]/g, '_');
     const filename = `${safeTitle} ${startNum}-${endNum}.txt`;
 
-    const blob = new Blob([compiledText], { type: 'text/plain;charset=utf-8' });
+    // 💡 [핵심] UTF-8 강제 호환을 유도하는 BOM (\ufeff) 바이너리 생성
+    const BOM = new Uint8Array([0xEF, 0xBB, 0xBF]); // UTF-8 바이트 시그니처
+    const blob = new Blob([BOM, compiledText], { type: 'text/plain;charset=utf-8' });
+    
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = filename;
