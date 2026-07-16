@@ -1,14 +1,14 @@
-/* * Novel Downloader (V31: Multi-Site Hybrid & Auto Selector)
- * 1. 자동 사이트 감지: 69shuba / novel543 도메인을 실시간 감지하여 맞춤형 파서 자동 선택
- * 2. novel543 전용 파서 추가: .content_detail, #content_detail 등 전용 태그 완벽 대응
- * 3. 통합 저장소 대시보드, UTF-8 BOM 보정 및 캡차/403 우회 대기 기능 기본 장착
+/* * Novel Downloader (V32: Smart Flexible Parser for novel543)
+ * 1. novel543 목차 추출 패턴 극대화: 클래스 구조 무관, 화면 내 "第[숫자]章" 텍스트 포함 링크 올-스캔
+ * 2. 69shuba / novel543 하이브리드 수집 엔진 탑재
+ * 3. 캡차/403 우회 대기 기능, UTF-8 BOM 인코딩 보정 및 임시 저장소 관리자 내장
  */
 
 (function () {
   const existingUI = document.getElementById('my-downloader-ui');
   if (existingUI) existingUI.remove();
 
-  // --- [신규] 사이트 타입 분석 ---
+  // --- 사이트 타입 분석 ---
   const hostname = window.location.hostname;
   let siteType = "69shuba"; // 기본값
 
@@ -65,7 +65,7 @@
     });
   };
 
-  // DB에 저장된 모든 원시 데이터 가져오기 (대시보드용)
+  // DB에 저장된 모든 원시 데이터 가져오기
   const getAllStoredData = () => {
     return new Promise((resolve) => {
       const transaction = db.transaction([STORE_NAME], "readonly");
@@ -95,15 +95,13 @@
     });
   };
 
-  // --- 메타 데이터 추출 (하이브리드 대응) ---
+  // --- 메타 데이터 추출 ---
   const getNovelTitle = () => {
     try {
       if (siteType === "novel543") {
-        // novel543의 제목 감지용
         const h1 = document.querySelector('h1.title, .info_title h1, h1');
-        if (h1) return h1.innerText.replace("章節列表", "").trim();
+        if (h1) return h1.innerText.replace("章節列表", "").replace("章节列表", "").trim();
       } else {
-        // 69shuba 제목 감지용
         const meta = document.querySelector('meta[property="og:novel:book_name"]');
         if (meta) return meta.content.trim();
         const h1 = document.querySelector('.booknav2 h1 a, h1, .book-info h1');
@@ -113,7 +111,7 @@
     return `${siteType}_Novel`;
   };
 
-  // --- 본문 광고성 키워드 및 불필요한 줄바꿈 제거 ---
+  // --- 본문 텍스트 정제 ---
   const cleanText = (text) => {
     text = text
       .replace(/<script[^>]*>([\s\S]*?)<\/script>/gi, '') 
@@ -145,7 +143,6 @@
   // --- 상태 관리 ---
   const getNovelKey = () => {
     const pathParts = window.location.pathname.replace(/\/$/, "").split('/');
-    // novel543의 주소 구조 예: /book/47135/ 등 숫자로 구성된 마지막 고유키 추출
     return pathParts.pop() || pathParts.pop() || 'default_key';
   };
 
@@ -187,7 +184,7 @@
 
         <div style="border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between;">
             <div style="width: 85%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">
-                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V31: 하이브리드 수집기 (${siteType.toUpperCase()})</h3>
+                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V32: 통합 수집기 (${siteType.toUpperCase()})</h3>
             </div>
             <button id="btn-close" style="background:none; border:none; color:#fff; cursor:pointer;">✕</button>
         </div>
@@ -318,35 +315,14 @@
     await refreshDashboard();
   }).catch(e => log(`DB 에러: ${e.message}`));
 
-  // --- [하이브리드 지원] 목차 스캔 로직 ---
+  // --- [V32 핵심 개정] 초유연 목차 스캔 로직 ---
   const scanEpisodes = async () => {
     document.getElementById('btn-scan').disabled = true;
-    log(`🚀 [${siteType.toUpperCase()}] 목차 스캔 시작...`);
+    log(`🚀 [${siteType.toUpperCase()}] 목차 정밀 스캔 시작...`);
 
     try {
-      let rawLinks = [];
-
-      if (siteType === "novel543") {
-        // novel543의 목차 영역 파싱 (.section-list, .chapter-list 등)
-        let container = document.querySelector('.section-list, .chapter-list, .chapter, #chapter-list');
-        if (container) {
-          rawLinks = Array.from(container.querySelectorAll('a'));
-        } else {
-          // novel543 메인/목차 페이지 백업 파싱
-          rawLinks = Array.from(document.querySelectorAll('a')).filter(a => {
-            const href = a.getAttribute('href') || "";
-            return href.includes("/chapter/") || href.includes("/read/");
-          });
-        }
-      } else {
-        // 69shuba 목차 영역 파싱
-        let container = document.querySelector('.catalog-all ul, #catalog ul, .catalog-list ul, .p_list ul');
-        if (container) {
-          rawLinks = Array.from(container.querySelectorAll('li a'));
-        } else {
-          rawLinks = Array.from(document.querySelectorAll('a'));
-        }
-      }
+      // 1. 페이지 내부의 모든 a 태그(하이퍼링크)를 다 긁어모읍니다.
+      let rawLinks = Array.from(document.querySelectorAll('a'));
 
       let parsedLinks = rawLinks.map((el) => {
         const text = el.innerText ? el.innerText.trim() : "";
@@ -354,27 +330,21 @@
         return { text, href };
       });
 
-      // 공통 목차 필터링
+      // 2. novel543 / 69shuba 공통 필터 적용
       parsedLinks = parsedLinks.filter(link => {
         if (!link.text || !link.href) return false;
         
-        const blockKeywords = ["书签", "最新章节", "目录", "加入书架", "推荐", "返回", "电脑版", "手机版", "最新", "원문", "完本感言"];
+        // 제외할 블랙리스트 단어
+        const blockKeywords = ["书签", "最新章节", "目录", "加入书架", "推荐", "返回", "电脑版", "手机版", "最新", "원문", "完本感言", "장절목록", "章节列表"];
         const hasBlockWord = blockKeywords.some(word => link.text.includes(word));
         if (hasBlockWord) return false;
 
-        let isValidHref = false;
-        if (siteType === "novel543") {
-          isValidHref = link.href.includes("/chapter/") || link.href.includes("/read/") || link.href.endsWith(".html");
-        } else {
-          isValidHref = link.href.endsWith('.htm') || link.href.endsWith('.html') || /\/txt\/\d+\/\d+/.test(link.href);
-        }
-        if (!isValidHref) return false;
-
+        // "第X章" 또는 "第X화" 형식을 지니고 있는가? (novel543 목차 추출의 핵심)
         const hasChapterPattern = /第?\s*\d+\s*[章|话|화|回]/g.test(link.text) || link.text.startsWith("第");
         return hasChapterPattern;
       });
 
-      // 상대경로 -> 절대경로 보정
+      // 3. 상대경로 -> 절대경로 보정
       parsedLinks = parsedLinks.map(link => {
         if (link.href && !link.href.startsWith('http')) {
           link.href = new URL(link.href, window.location.href).href;
@@ -382,6 +352,7 @@
         return link;
       });
 
+      // 4. 주소 기준 중복 제거
       const uniqueLinks = [];
       const seen = new Set();
       for (const link of parsedLinks) {
@@ -392,11 +363,11 @@
       }
 
       if (uniqueLinks.length === 0) {
-        throw new Error(`${siteType} 규격의 목차 링크를 감지하지 못했습니다.`);
+        throw new Error("소설 목차 링크가 발견되지 않았습니다. 현재 페이지가 목차 화면인지 다시 확인해 주세요.");
       }
 
-      log(`첫 챕터: ${uniqueLinks[0].text}`);
-      log(`마지막 챕터: ${uniqueLinks[uniqueLinks.length - 1].text}`);
+      log(`첫 챕터 탐색 성공: ${uniqueLinks[0].text}`);
+      log(`마지막 챕터 탐색 성공: ${uniqueLinks[uniqueLinks.length - 1].text}`);
 
       state.allLinks = uniqueLinks;
       document.getElementById('step-setup').style.display = 'none';
@@ -404,13 +375,14 @@
       document.getElementById('found-count').innerText = state.allLinks.length;
       document.getElementById('range-end').value = state.allLinks.length;
 
+      // 현재 소설의 DB 수집분량 확인 후 자동 설정
       const saved = await loadChaptersFromDB(state.novelKey);
       if (saved.length > 0) {
         const nextTargetNum = saved.length + 1;
         document.getElementById('range-start').value = Math.min(nextTargetNum, state.allLinks.length);
       }
 
-      log(`✅ 완료! 실제 총 ${state.allLinks.length}화 탐색됨.`);
+      log(`✅ 스캔 완료! 실제 총 ${state.allLinks.length}화 정렬됨.`);
     } catch (e) {
       log(`❌ 오류: ${e.message}`);
       document.getElementById('btn-scan').disabled = false;
@@ -444,7 +416,7 @@
       const ep = targets[i];
       const displayNum = startIdx + i + 1;
 
-      // 트래픽 제한 및 차단 과열 방지 휴식 (novel543은 40화 단위로 작동)
+      // 트래픽 제한 및 차단 과열 방지 휴식 (40화 단위로 8초 휴식)
       if (i > 0 && i % 40 === 0) {
         log(`☕ 보안 장치 과열 방지 휴식... (8초)`);
         await new Promise((r) => setTimeout(r, 8000));
@@ -490,12 +462,10 @@
         const doc = new DOMParser().parseFromString(htmlText, 'text/html');
         let contentEl = null;
 
-        // [하이브리드 대응] 사이트 구조별 본문 영역 추출 분기
+        // 사이트 구조별 본문 영역 추출 분기
         if (siteType === "novel543") {
-          // novel543의 대표적인 소설 본문 타겟팅 선택자
           contentEl = doc.querySelector('.content_detail, #content_detail, .read-content, #chapter-content');
         } else {
-          // 69shuba용 본문 타겟팅 선택자
           contentEl = doc.querySelector('.txtnav, #txtnav, .showtxt, #content');
         }
 
@@ -521,7 +491,7 @@
           alert(`[IP 임시 차단]\n현재 수집된 분량까지 저장한 뒤 브라우저를 재접속하거나 VPN 우회를 고려해 보세요.`);
           stopFlag = true;
         } else {
-          log(`❌ 통신 요류: ${e.message}. 일시정지 상태로 재도전 대기.`);
+          log(`❌ 통신 오류: ${e.message}. 일시정지 상태로 재도전 대기.`);
           state.isPaused = true;
           i--; 
         }
