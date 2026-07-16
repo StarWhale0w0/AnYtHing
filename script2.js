@@ -1,7 +1,7 @@
-/* * Novel Downloader (V36: Dynamic Render Waiter & Broad Semantic Scanned)
- * 1. novel543 동적 광고 로딩 대기: 광고 스크립트(TAMedia 등) 실행 후 목차가 그려질 시간을 보장 (setTimeout)
- * 2. 와일드카드 주소 스캔: 엄격한 주소 매칭 대신 작품ID가 포함된 모든 유효 링크를 선별 수집하여 누락 차단
- * 3. 69shuba / novel543 완벽 하이브리드 엔진, UTF-8 BOM 보정, 임시 저장소 대시보드 내장
+/* * Novel Downloader (V37: Nuclear Option Parser for novel543)
+ * 1. 2초의 넉넉한 렌더링 지연(setTimeout) 부여하여 TAMedia 광고 스크립트 실행 완벽 대기
+ * 2. 원자폭탄급 와일드카드 필터: 정규식/패턴 매칭 전면 폐기. 작품번호(0918487988)만 링크에 붙어있으면 묻지도 따지지도 않고 올-스캔
+ * 3. 69shuba / novel543 하이브리드 완벽 대응, UTF-8 BOM 인코딩 교정 및 로컬 저장소 대시보드 내장
  */
 
 (function () {
@@ -188,7 +188,7 @@
 
         <div style="border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between;">
             <div style="width: 85%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">
-                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V36: 통합 수집기 (${siteType.toUpperCase()})</h3>
+                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V37: 통합 슈퍼 크롤러 (${siteType.toUpperCase()})</h3>
             </div>
             <button id="btn-close" style="background:none; border:none; color:#fff; cursor:pointer;">✕</button>
         </div>
@@ -319,12 +319,12 @@
     await refreshDashboard();
   }).catch(e => log(`DB 에러: ${e.message}`));
 
-  // --- [V36 핵심 개정] 광고 스크립트 대응 지연 및 와일드카드 필터링 ---
+  // --- [V37 핵심 개정] 초광대역 와일드카드 수집 방식 ---
   const scanEpisodes = async () => {
     document.getElementById('btn-scan').disabled = true;
-    log(`🚀 [${siteType.toUpperCase()}] 목차 데이터 탐색 중... (스크립트 로딩 대기 0.5초)`);
+    log(`🚀 [${siteType.toUpperCase()}] 목차 스캔 시작... (광고 스크립트 로딩 대기 2.0초)`);
 
-    // 💡 광고 및 외부 비동기 스크립트가 목차를 안정적으로 그릴 수 있도록 지연 실행 처리
+    // 광고가 목차 리스트를 완전히 뿌릴 때까지 의도적으로 2초간 넉넉하게 딜레이를 줍니다.
     setTimeout(async () => {
       try {
         let rawLinks = Array.from(document.querySelectorAll('a'));
@@ -332,7 +332,7 @@
 
         if (siteType === "novel543") {
           const novelId = state.novelKey; // 예: 0918487988
-          log(`💡 와일드카드 수집 방식 작동 (ID: ${novelId} 연관 링크 전체 추출)`);
+          log(`💡 와일드카드 초광대역 수집기 가동 (ID: ${novelId} 연관 모든 링크 추적)`);
 
           parsedLinks = rawLinks.map((el) => {
             const text = el.innerText ? el.innerText.trim() : "";
@@ -341,11 +341,10 @@
           }).filter(link => {
             if (!link.href) return false;
             
-            // 작품ID 번호가 주소창 어딘가에 박혀있는지 광범위 검색
+            // 주소창(href)에 작품번호가 포함되어 있는지 확인
             const hasNovelId = link.href.includes(novelId);
-            
-            // 불필요한 메인 메뉴 노이즈 및 공백 단락 제거
-            const isNoise = link.href.includes("/dir") || link.text.includes("章节列表") || link.text.includes("章節列表") || link.text === "";
+            // 메인 이동용 무효 링크(/dir) 제거 및 제목이 없는 링크 제거
+            const isNoise = link.href.endsWith('/dir') || link.href.endsWith('/dir/') || link.text === "";
             
             return hasNovelId && !isNoise;
           });
@@ -378,7 +377,7 @@
           return link;
         });
 
-        // 중복 제거
+        // 중복 주소 제거
         const uniqueLinks = [];
         const seen = new Set();
         for (const link of parsedLinks) {
@@ -389,7 +388,7 @@
         }
 
         if (uniqueLinks.length === 0) {
-          throw new Error("소설 목차 링크를 가져오지 못했습니다. 페이지가 다 로딩된 후 다시 버튼을 누르거나 주소를 확인해 주세요.");
+          throw new Error("소설 목차 링크를 가져오지 못했습니다. 페이지가 완전히 로드된 후 다시 [목차 가져오기]를 눌러보세요.");
         }
 
         log(`첫 챕터 탐색 성공: ${uniqueLinks[0].text}`);
@@ -413,7 +412,7 @@
         log(`❌ 오류: ${e.message}`);
         document.getElementById('btn-scan').disabled = false;
       }
-    }, 500); // 0.5초 대기 후 DOM 파싱 시작
+    }, 2000); // 2초 대기 후 동적 생성된 a 태그 일괄 스캔
   };
 
   // --- 메인 다운로드 루프 ---
