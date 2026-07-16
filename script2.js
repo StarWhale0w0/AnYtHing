@@ -1,7 +1,7 @@
-/* * Novel Downloader (V41: Absolute Sequence Sorter)
- * 1. novel543/69shuba 공통 숫자 기반 오름차순 강제 정렬: 목록의 순서가 역순이든 정순이든 제목의 숫자를 추출하여 무조건 1화부터 정방향 순차 정렬
- * 2. 전부章节 정밀 구역 스캔 및 노이즈 링크 필터링 완비
- * 3. UTF-8 BOM 보정, 대시보드 관리자, 캡차/403 우회 대기 기능 탑재
+/* * Novel Downloader (V49: Pure Body Text Ad & Notice Annihilator)
+ * 1. 알림/공지 노이즈 완벽 제거: 본문 하단에 끈질기게 붙는 '溫馨提示(温馨提示)', '站內信', '加入書架' 등의 노이즈 단락을 통째로 숙청
+ * 2. 제목 기반 (현재/전체) 정밀 타겟팅 결합 보호막을 통해 전/후반부 조각 Seamless 병합
+ * 3. 69shuba / novel543 하이브리드 완벽 최적화 스위칭, UTF-8 BOM 인코딩 교정 기본 장착
  */
 
 (function () {
@@ -111,7 +111,7 @@
     return `${siteType}_Novel`;
   };
 
-  // --- 본문 텍스트 정제 ---
+  // --- 💡 [V49 핵심 교정] 본문 텍스트 알림 완벽 제거 필터 장착 ---
   const cleanText = (text) => {
     text = text
       .replace(/<script[^>]*>([\s\S]*?)<\/script>/gi, '') 
@@ -129,8 +129,17 @@
       .map((line) => line.trim())
       .filter((line) => {
         const l = line.toLowerCase();
+        
+        // 💡 사이트 자체 노이즈 가드 작동 조건
+        const isNoticeNoise = 
+          l.includes('溫馨提示') || l.includes('温馨提示') ||
+          l.includes('加入書架') || l.includes('加入书架') ||
+          l.includes('站內信') || l.includes('站内信') ||
+          l.includes('回復您的訊息') || l.includes('回复您的信息');
+
         return (
           line.length > 0 && 
+          !isNoticeNoise && // 알림 노이즈 단락이면 가차없이 버림
           !l.includes('www.69shuba.com') && 
           !l.includes('69书吧') &&
           !l.includes('novel543.com') &&
@@ -188,7 +197,7 @@
 
         <div style="border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between;">
             <div style="width: 85%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">
-                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V41: 종결 통합 수집기 (${siteType.toUpperCase()})</h3>
+                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V49: 통합 수집기 (${siteType.toUpperCase()})</h3>
             </div>
             <button id="btn-close" style="background:none; border:none; color:#fff; cursor:pointer;">✕</button>
         </div>
@@ -232,7 +241,7 @@
         </div>
 
         <div id="log-box" style="margin-top:15px; background:#000; height:100px; overflow-y:auto; padding:10px; font-family:monospace; color:#ccc; border:1px solid #555; font-size:12px;">
-            버전 마일스톤: V41 순차정렬 고정형<br>데이터베이스 정보를 불러옵니다...
+            버전 마일스톤: V49 본문 클린 가드 장착형<br>데이터베이스 정보를 불러옵니다...
         </div>
 
         <button id="btn-save" style="width:100%; margin-top:10px; padding:12px; background:#FF9800; color:white; border:none; border-radius:4px; font-weight:bold; display:none;">💾 수집한 구간 저장하기</button>
@@ -347,6 +356,15 @@
             return hasNovelId && !isNoise && hasChapterPattern;
           });
 
+          // 대표 화수 정방향 정렬 (8096_1.html, 8096_2.html 기준으로 오름차순 정렬)
+          parsedLinks.sort((a, b) => {
+            const fileA = a.href.split('/').pop().replace('.html', '');
+            const fileB = b.href.split('/').pop().replace('.html', '');
+            const valA = parseInt(fileA.split('_')[1], 10) || 0;
+            const valB = parseInt(fileB.split('_')[1], 10) || 0;
+            return valA - valB;
+          });
+
         } else {
           // 69shuba 챕터 탐색
           let rawLinks = Array.from(document.querySelectorAll('a'));
@@ -365,6 +383,14 @@
 
             const hasChapterPattern = /第?\s*\d+\s*[章|话|화|回]/g.test(link.text) || link.text.startsWith("第");
             return hasChapterPattern;
+          });
+          
+          parsedLinks.sort((a, b) => {
+            const numA = a.text.match(/\d+/);
+            const numB = b.text.match(/\d+/);
+            const valA = numA ? parseInt(numA[0], 10) : 0;
+            const valB = numB ? parseInt(numB[0], 10) : 0;
+            return valA - valB;
           });
         }
 
@@ -390,15 +416,6 @@
           throw new Error("소설 정규 목차 링크를 가져오지 못했습니다.");
         }
 
-        // 💡 [V41 최종 장치] 제목의 숫자를 추적해 강제로 1화부터 최종화까지 순차 정렬(sort)을 수행합니다!
-        uniqueLinks.sort((a, b) => {
-          const numA = a.text.match(/\d+/);
-          const numB = b.text.match(/\d+/);
-          const valA = numA ? parseInt(numA[0], 10) : 0;
-          const valB = numB ? parseInt(numB[0], 10) : 0;
-          return valA - valB;
-        });
-
         log(`첫 챕터 진입 확인: ${uniqueLinks[0].text}`);
         log(`마지막 챕터 진입 확인: ${uniqueLinks[uniqueLinks.length - 1].text}`);
 
@@ -420,6 +437,57 @@
         document.getElementById('btn-scan').disabled = false;
       }
     }, 2000); 
+  };
+
+  // --- 단일 페이지 본문 파싱 범용 함수 ---
+  const extractContentFromDoc = (doc) => {
+    let selectors = [];
+    if (siteType === "novel543") {
+      selectors = ['.content_detail', '#content_detail', '.read-content', '#chapter-content', '.content', '#htmlContent', '.text-content', 'article', '#content'];
+    } else {
+      selectors = ['.txtnav', '#txtnav', '.showtxt', '#content'];
+    }
+
+    let targetEl = null;
+    for (let sel of selectors) {
+      targetEl = doc.querySelector(sel);
+      if (targetEl && targetEl.innerText.trim().length > 200) break;
+    }
+
+    if (!targetEl || targetEl.innerText.trim().length < 100) {
+      let allDivs = Array.from(doc.querySelectorAll('div, article, p'));
+      let longestLength = 0;
+      let bestCandidate = null;
+
+      allDivs.forEach(el => {
+        let textLen = el.innerText ? el.innerText.trim().length : 0;
+        if (textLen > longestLength && !el.querySelector('script') && el.id !== 'my-downloader-ui') {
+          longestLength = textLen;
+          bestCandidate = el;
+        }
+      });
+      if (bestCandidate && longestLength > 200) targetEl = bestCandidate;
+    }
+
+    return targetEl ? cleanText(targetEl.innerHTML) : null;
+  };
+
+  // --- 제목 분석형 조각 한계 분석기 ---
+  const parsePageLimits = (doc) => {
+    try {
+      let h1 = doc.querySelector('h1, title');
+      if (h1) {
+        let titleText = h1.innerText || h1.textContent || "";
+        let match = titleText.match(/\((\d+)\/(\d+)\)/);
+        if (match) {
+          return {
+            current: parseInt(match[1], 10),
+            total: parseInt(match[2], 10)
+          };
+        }
+      }
+    } catch (e) {}
+    return { current: 1, total: 1 }; 
   };
 
   // --- 메인 다운로드 루프 ---
@@ -454,77 +522,78 @@
         await new Promise((r) => setTimeout(r, 8000));
       }
 
-      log(`⬇ [${displayNum}/${endIdx}] 받는 중...`);
+      log(`⬇ [${displayNum}/${endIdx}] 받는 중...: ${ep.text}`);
 
       try {
-        const res = await fetch(ep.href);
-
-        if (
-          res.url.includes('captcha') ||
-          res.url.includes('challenge') ||
-          res.url.includes('antibot')
-        ) {
-          throw new Error('CAPTCHA_DETECTED');
-        }
-
-        if (res.status === 403 || res.status === 429) {
-          throw new Error('403_BLOCKED');
-        }
-
-        const buffer = await res.arrayBuffer();
-        const contentType = res.headers.get("content-type") || "";
-        let encoding = 'utf-8';
+        let combinedText = "";
         
-        if (contentType.toLowerCase().includes("gbk") || contentType.toLowerCase().includes("gb2312")) {
-          encoding = 'gbk';
-        } else {
-          try {
-            const tempDecoder = new TextDecoder('utf-8', { fatal: true });
-            tempDecoder.decode(buffer);
-            encoding = 'utf-8';
-          } catch (e) {
-            encoding = 'gbk';
+        // 1. 전반부 기본 페이지 다운로드
+        let res = await fetch(ep.href);
+        if (res.status !== 200) throw new Error(`HTTP_ERR_${res.status}`);
+
+        let buffer = await res.arrayBuffer();
+        let htmlText = new TextDecoder('utf-8').decode(buffer);
+        if (htmlText.includes('gbk') || htmlText.includes('gb2312')) htmlText = new TextDecoder('gbk').decode(buffer);
+
+        let doc = new DOMParser().parseFromString(htmlText, 'text/html');
+        let mainBody = extractContentFromDoc(doc);
+        if (mainBody) combinedText += mainBody;
+
+        // 2. 제목 기반 후반부 조각 확정 병합 루프
+        if (siteType === "novel543") {
+          let limits = parsePageLimits(doc);
+          
+          if (limits.total > 1) {
+            let baseUrl = ep.href.replace('.html', '');
+
+            for (let partIndex = 2; partIndex <= limits.total; partIndex++) {
+              
+              while (state.isPaused) {
+                log('⏸ 조각 결합 중 일시정지 제어 개입...');
+                document.getElementById('btn-pause').style.display = 'none';
+                document.getElementById('btn-resume').style.display = 'block';
+                await new Promise((r) => setTimeout(r, 1000));
+              }
+
+              let nextPartUrl = `${baseUrl}_${partIndex}.html`;
+              await new Promise((r) => setTimeout(r, 300)); 
+
+              try {
+                let partRes = await fetch(nextPartUrl);
+                if (partRes.status === 200) {
+                  let partBuffer = await partRes.arrayBuffer();
+                  let partHtml = new TextDecoder('utf-8').decode(partBuffer);
+                  if (partHtml.includes('gbk') || partHtml.includes('gb2312')) partHtml = new TextDecoder('gbk').decode(partBuffer);
+
+                  let partDoc = new DOMParser().parseFromString(partHtml, 'text/html');
+                  let partBody = extractContentFromDoc(partDoc);
+                  
+                  if (partBody) {
+                    log(`   ➕ 후반부 연장 조각 확정 결합... (페이지: ${partIndex}/${limits.total})`);
+                    combinedText += `\n\n` + partBody;
+                  }
+                }
+              } catch (err) {
+                log(`   ⚠️ 조각 수집 중 일시적 오류 발생: ${err.message}`);
+              }
+            }
           }
         }
 
-        const decoder = new TextDecoder(encoding);
-        const htmlText = decoder.decode(buffer);
-
-        const doc = new DOMParser().parseFromString(htmlText, 'text/html');
-        let contentEl = null;
-
-        if (siteType === "novel543") {
-          contentEl = doc.querySelector('.content_detail, #content_detail, .read-content, #chapter-content');
+        // 데이터베이스 세이브
+        if (combinedText.trim().length > 10) {
+          await saveChapterToDB(state.novelKey, displayNum, combinedText, ep.text);
         } else {
-          contentEl = doc.querySelector('.txtnav, #txtnav, .showtxt, #content');
-        }
-
-        if (contentEl) {
-          const cleanBody = cleanText(contentEl.innerHTML);
-          await saveChapterToDB(state.novelKey, displayNum, cleanBody, ep.text);
-        } else {
-          log(`⚠️ 본문 영역 추출 실패: ${ep.text}`);
+          log(`❌ 본문 수집 실패 오류: ${ep.text}`);
         }
 
         const randomJitter = Math.random() * 1000;
         await new Promise((r) => setTimeout(r, baseSpeed + randomJitter));
 
       } catch (e) {
-        if (e.message === 'CAPTCHA_DETECTED') {
-          log(`🚨 캡차 감지! 새 창으로 캡차를 풀고 [재개]를 누르세요.`);
-          alert(`[보안 캡차 감지]\n작업이 임시 정지됩니다.\n새 탭으로 해당 화(${ep.href})에 접속해 캡차를 풀고 [재개]를 누르세요.`);
-          window.open(ep.href, '_blank');
-          state.isPaused = true;
-          i--; 
-        } else if (e.message === '403_BLOCKED') {
-          log(`⛔ 403/429 차단 발생! 데이터 손실 방지를 위해 다운로드 세션을 임시 봉인합니다.`);
-          alert(`[IP 임시 차단]\n현재 수집된 분량까지 저장한 뒤 브라우저를 재접속하거나 VPN 우회를 고려해 보세요.`);
-          stopFlag = true;
-        } else {
-          log(`❌ 통신 오류: ${e.message}. 일시정지 상태로 재도전 대기.`);
-          state.isPaused = true;
-          i--; 
-        }
+        log(`❌ 통신 오류: ${e.message}. 일시정지 상태로 전환.`);
+        state.isPaused = true;
+        i--; 
       }
     }
 
@@ -535,12 +604,7 @@
     state.realEndIndex = savedList.length > 0 ? savedList[savedList.length - 1].index : 0;
 
     await refreshDashboard();
-
-    if (stopFlag) {
-      log(`⚠️ 차단으로 수집 중단. 현재 세션 누적: ${state.realEndIndex}화`);
-    } else {
-      log(`🎉 수집 완료! 통합 저장 파일을 생성할 준비가 되었습니다.`);
-    }
+    log(`🎉 수집 완료! 통합 저장 파일을 생성할 준비가 되었습니다.`);
   };
 
   // --- 통합 저장 및 파일 다운로드 ---
