@@ -1,7 +1,7 @@
-/* * Novel Downloader (V32: Smart Flexible Parser for novel543)
- * 1. novel543 목차 추출 패턴 극대화: 클래스 구조 무관, 화면 내 "第[숫자]章" 텍스트 포함 링크 올-스캔
- * 2. 69shuba / novel543 하이브리드 수집 엔진 탑재
- * 3. 캡차/403 우회 대기 기능, UTF-8 BOM 인코딩 보정 및 임시 저장소 관리자 내장
+/* * Novel Downloader (V34: Novel543 Absolute Path Parser)
+ * 1. novel543 전용 정규식(RegExp) 매칭 적용: /소설ID/숫자 패턴 완벽 수집 (/0918487988/1.html 등)
+ * 2. 69shuba / novel543 하이브리드 자동 스위칭 감지
+ * 3. UTF-8 BOM 인코딩 보정, 캡차/403 우회 대기 기능 및 임시 저장소 관리자 탑재
  */
 
 (function () {
@@ -99,7 +99,7 @@
   const getNovelTitle = () => {
     try {
       if (siteType === "novel543") {
-        const h1 = document.querySelector('h1.title, .info_title h1, h1');
+        const h1 = document.querySelector('h1.title, .info_title h1, h1, .book-title');
         if (h1) return h1.innerText.replace("章節列表", "").replace("章节列表", "").trim();
       } else {
         const meta = document.querySelector('meta[property="og:novel:book_name"]');
@@ -143,7 +143,12 @@
   // --- 상태 관리 ---
   const getNovelKey = () => {
     const pathParts = window.location.pathname.replace(/\/$/, "").split('/');
-    return pathParts.pop() || pathParts.pop() || 'default_key';
+    // 만약 마지막 주소가 dir로 끝나면 그 앞의 주소인 소설 번호를 ID로 획득합니다.
+    let lastPart = pathParts.pop();
+    if (lastPart === "dir") {
+      lastPart = pathParts.pop();
+    }
+    return lastPart || 'default_key';
   };
 
   let state = {
@@ -184,7 +189,7 @@
 
         <div style="border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between;">
             <div style="width: 85%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">
-                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V32: 통합 수집기 (${siteType.toUpperCase()})</h3>
+                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V34: 통합 수집기 (${siteType.toUpperCase()})</h3>
             </div>
             <button id="btn-close" style="background:none; border:none; color:#fff; cursor:pointer;">✕</button>
         </div>
@@ -241,7 +246,7 @@
     box.scrollTop = box.scrollHeight;
   };
 
-  // --- 대시보드 새로고침 함수 ---
+  // --- 대시보드 새로고침 ---
   const refreshDashboard = async () => {
     const dbListEl = document.getElementById('db-list');
     const dbSizeEl = document.getElementById('total-db-size');
@@ -309,42 +314,72 @@
     }
   };
 
-  // --- DB 초기화 및 복구 데이터 조회 ---
+  // --- DB 초기화 및 대시보드 출력 ---
   initDB().then(async () => {
     log("데이터베이스 로드 성공.");
     await refreshDashboard();
   }).catch(e => log(`DB 에러: ${e.message}`));
 
-  // --- [V32 핵심 개정] 초유연 목차 스캔 로직 ---
+  // --- [V34 핵심 개정] novel543 정규식 절대경로 필터 엔진 ---
   const scanEpisodes = async () => {
     document.getElementById('btn-scan').disabled = true;
     log(`🚀 [${siteType.toUpperCase()}] 목차 정밀 스캔 시작...`);
 
     try {
-      // 1. 페이지 내부의 모든 a 태그(하이퍼링크)를 다 긁어모읍니다.
       let rawLinks = Array.from(document.querySelectorAll('a'));
+      let parsedLinks = [];
 
-      let parsedLinks = rawLinks.map((el) => {
-        const text = el.innerText ? el.innerText.trim() : "";
-        const href = el.getAttribute('href') || "";
-        return { text, href };
-      });
-
-      // 2. novel543 / 69shuba 공통 필터 적용
-      parsedLinks = parsedLinks.filter(link => {
-        if (!link.text || !link.href) return false;
+      if (siteType === "novel543") {
+        log(`💡 novel543 전용 '/소설ID/챕터' 정규식 분석기 가동...`);
         
-        // 제외할 블랙리스트 단어
-        const blockKeywords = ["书签", "最新章节", "目录", "加入书架", "推荐", "返回", "电脑版", "手机版", "最新", "원문", "完本感言", "장절목록", "章节列表"];
-        const hasBlockWord = blockKeywords.some(word => link.text.includes(word));
-        if (hasBlockWord) return false;
+        // 소설 고유 번호 추출
+        const novelId = state.novelKey;
+        // 정규식 생성: /소설번호/숫자 또는 /소설번호/숫자.html 패턴을 정확히 검증합니다.
+        const pathRegex = new RegExp(`^/${novelId}/\\d+(\\.html)?$`);
 
-        // "第X章" 또는 "第X화" 형식을 지니고 있는가? (novel543 목차 추출의 핵심)
-        const hasChapterPattern = /第?\s*\d+\s*[章|话|화|回]/g.test(link.text) || link.text.startsWith("第");
-        return hasChapterPattern;
-      });
+        parsedLinks = rawLinks.map((el) => {
+          const text = el.innerText ? el.innerText.trim() : "";
+          const href = el.getAttribute('href') || "";
+          return { text, href };
+        }).filter(link => {
+          if (!link.href) return false;
 
-      // 3. 상대경로 -> 절대경로 보정
+          try {
+            // 가져온 href의 경로 부분만 순수하게 파싱합니다.
+            const urlObj = new URL(link.href, window.location.href);
+            const path = urlObj.pathname; // 예: "/0918487988/1.html"
+
+            // 정규식 매칭 및 불필요한 메인메뉴용 노이즈 필터링
+            const isMatch = pathRegex.test(path);
+            const isNoise = link.text.includes("章节列表") || link.text.includes("章節列表") || link.text === "";
+
+            return isMatch && !isNoise;
+          } catch(err) {
+            return false;
+          }
+        });
+
+      } else {
+        // 69shuba 챕터 탐색
+        parsedLinks = rawLinks.map((el) => {
+          const text = el.innerText ? el.innerText.trim() : "";
+          const href = el.getAttribute('href') || "";
+          return { text, href };
+        }).filter(link => {
+          if (!link.text || !link.href) return false;
+          const blockKeywords = ["书签", "最新章节", "目录", "加入书架", "推荐", "返回", "电脑版", "手机版", "最新", "원문", "完本感言"];
+          const hasBlockWord = blockKeywords.some(word => link.text.includes(word));
+          if (hasBlockWord) return false;
+
+          const isValidHref = link.href.endsWith('.htm') || link.href.endsWith('.html') || /\/txt\/\d+\/\d+/.test(link.href);
+          if (!isValidHref) return false;
+
+          const hasChapterPattern = /第?\s*\d+\s*[章|话|화|回]/g.test(link.text) || link.text.startsWith("第");
+          return hasChapterPattern;
+        });
+      }
+
+      // 상대경로 보정
       parsedLinks = parsedLinks.map(link => {
         if (link.href && !link.href.startsWith('http')) {
           link.href = new URL(link.href, window.location.href).href;
@@ -352,7 +387,7 @@
         return link;
       });
 
-      // 4. 주소 기준 중복 제거
+      // 중복 제거
       const uniqueLinks = [];
       const seen = new Set();
       for (const link of parsedLinks) {
@@ -363,7 +398,7 @@
       }
 
       if (uniqueLinks.length === 0) {
-        throw new Error("소설 목차 링크가 발견되지 않았습니다. 현재 페이지가 목차 화면인지 다시 확인해 주세요.");
+        throw new Error(`소설 목차 링크가 발견되지 않았습니다.\n현재 페이지가 ${siteType === 'novel543' ? '목차(/dir)' : '상세'} 화면이 맞는지 확인해 주세요.`);
       }
 
       log(`첫 챕터 탐색 성공: ${uniqueLinks[0].text}`);
@@ -416,7 +451,7 @@
       const ep = targets[i];
       const displayNum = startIdx + i + 1;
 
-      // 트래픽 제한 및 차단 과열 방지 휴식 (40화 단위로 8초 휴식)
+      // novel543 과열 방지 휴식 (40화 단위로 8초 휴식)
       if (i > 0 && i % 40 === 0) {
         log(`☕ 보안 장치 과열 방지 휴식... (8초)`);
         await new Promise((r) => setTimeout(r, 8000));
