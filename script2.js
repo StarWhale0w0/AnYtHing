@@ -1,7 +1,7 @@
-/* * Novel Downloader (V34: Novel543 Absolute Path Parser)
- * 1. novel543 전용 정규식(RegExp) 매칭 적용: /소설ID/숫자 패턴 완벽 수집 (/0918487988/1.html 등)
- * 2. 69shuba / novel543 하이브리드 자동 스위칭 감지
- * 3. UTF-8 BOM 인코딩 보정, 캡차/403 우회 대기 기능 및 임시 저장소 관리자 탑재
+/* * Novel Downloader (V35: Clean Relative Path Parser for novel543)
+ * 1. novel543 상대경로 교정기 장착: /dir 경로에서 발생하는 브라우저의 상대경로 왜곡 버그 해결
+ * 2. 69shuba / novel543 지능형 하이브리드 스위칭
+ * 3. UTF-8 BOM 보정, 대시보드 관리자, 캡차/403 우회 대기 기능 완비
  */
 
 (function () {
@@ -143,7 +143,6 @@
   // --- 상태 관리 ---
   const getNovelKey = () => {
     const pathParts = window.location.pathname.replace(/\/$/, "").split('/');
-    // 만약 마지막 주소가 dir로 끝나면 그 앞의 주소인 소설 번호를 ID로 획득합니다.
     let lastPart = pathParts.pop();
     if (lastPart === "dir") {
       lastPart = pathParts.pop();
@@ -189,7 +188,7 @@
 
         <div style="border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between;">
             <div style="width: 85%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">
-                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V34: 통합 수집기 (${siteType.toUpperCase()})</h3>
+                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V35: 통합 수집기 (${siteType.toUpperCase()})</h3>
             </div>
             <button id="btn-close" style="background:none; border:none; color:#fff; cursor:pointer;">✕</button>
         </div>
@@ -320,7 +319,7 @@
     await refreshDashboard();
   }).catch(e => log(`DB 에러: ${e.message}`));
 
-  // --- [V34 핵심 개정] novel543 정규식 절대경로 필터 엔진 ---
+  // --- [V35 핵심 개정] novel543 상대경로 복구 스캔 엔진 ---
   const scanEpisodes = async () => {
     document.getElementById('btn-scan').disabled = true;
     log(`🚀 [${siteType.toUpperCase()}] 목차 정밀 스캔 시작...`);
@@ -330,26 +329,32 @@
       let parsedLinks = [];
 
       if (siteType === "novel543") {
-        log(`💡 novel543 전용 '/소설ID/챕터' 정규식 분석기 가동...`);
+        log(`💡 novel543 상대경로 교정 및 정규식 검사...`);
         
-        // 소설 고유 번호 추출
-        const novelId = state.novelKey;
-        // 정규식 생성: /소설번호/숫자 또는 /소설번호/숫자.html 패턴을 정확히 검증합니다.
+        const novelId = state.novelKey; // 예: 0918487988
+        // 검사용 정규식: /소설번호/챕터숫자
         const pathRegex = new RegExp(`^/${novelId}/\\d+(\\.html)?$`);
 
         parsedLinks = rawLinks.map((el) => {
           const text = el.innerText ? el.innerText.trim() : "";
-          const href = el.getAttribute('href') || "";
+          let href = el.getAttribute('href') || "";
+          
+          // [핵심 해결책] href 내부에 dir가 교란되거나 오염되어 있으면 경로를 순수하게 재조정합니다.
+          if (href && !href.startsWith('http')) {
+            // 주소가 만약 "0918487988/1.html" 형태로 들어온다면 앞에 슬래시(/)를 강제로 붙여 루트 상대경로로 변환합니다.
+            if (!href.startsWith('/')) {
+              href = '/' + href;
+            }
+          }
           return { text, href };
         }).filter(link => {
           if (!link.href) return false;
 
           try {
-            // 가져온 href의 경로 부분만 순수하게 파싱합니다.
-            const urlObj = new URL(link.href, window.location.href);
-            const path = urlObj.pathname; // 예: "/0918487988/1.html"
+            // 오염될 수 있는 '/dir' 이 포함된 주소를 배제하고 도메인을 원형 상태로 파싱합니다.
+            const urlObj = new URL(link.href, window.location.origin); // location.href가 아닌 origin 기준으로 상대경로를 교정합니다!
+            const path = urlObj.pathname;
 
-            // 정규식 매칭 및 불필요한 메인메뉴용 노이즈 필터링
             const isMatch = pathRegex.test(path);
             const isNoise = link.text.includes("章节列表") || link.text.includes("章節列表") || link.text === "";
 
@@ -379,15 +384,15 @@
         });
       }
 
-      // 상대경로 보정
+      // 3. 상대경로를 최종적인 원격 절대경로로 완벽하게 보정
       parsedLinks = parsedLinks.map(link => {
         if (link.href && !link.href.startsWith('http')) {
-          link.href = new URL(link.href, window.location.href).href;
+          link.href = new URL(link.href, window.location.origin).href; // origin 기준(버그 원천 차단)
         }
         return link;
       });
 
-      // 중복 제거
+      // 4. 중복 제거
       const uniqueLinks = [];
       const seen = new Set();
       for (const link of parsedLinks) {
@@ -398,7 +403,7 @@
       }
 
       if (uniqueLinks.length === 0) {
-        throw new Error(`소설 목차 링크가 발견되지 않았습니다.\n현재 페이지가 ${siteType === 'novel543' ? '목차(/dir)' : '상세'} 화면이 맞는지 확인해 주세요.`);
+        throw new Error(`소설 목차 링크가 발견되지 않았습니다.\n현재 페이지 주소창 끝에 '/dir'이 붙은 목차 화면이 맞는지 확인해 주세요.`);
       }
 
       log(`첫 챕터 탐색 성공: ${uniqueLinks[0].text}`);
@@ -451,7 +456,7 @@
       const ep = targets[i];
       const displayNum = startIdx + i + 1;
 
-      // novel543 과열 방지 휴식 (40화 단위로 8초 휴식)
+      // 과열 방지 휴식 (40화 단위로 8초 휴식)
       if (i > 0 && i % 40 === 0) {
         log(`☕ 보안 장치 과열 방지 휴식... (8초)`);
         await new Promise((r) => setTimeout(r, 8000));
