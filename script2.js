@@ -1,7 +1,7 @@
-/* * Novel Downloader (V35: Clean Relative Path Parser for novel543)
- * 1. novel543 상대경로 교정기 장착: /dir 경로에서 발생하는 브라우저의 상대경로 왜곡 버그 해결
- * 2. 69shuba / novel543 지능형 하이브리드 스위칭
- * 3. UTF-8 BOM 보정, 대시보드 관리자, 캡차/403 우회 대기 기능 완비
+/* * Novel Downloader (V36: Dynamic Render Waiter & Broad Semantic Scanned)
+ * 1. novel543 동적 광고 로딩 대기: 광고 스크립트(TAMedia 등) 실행 후 목차가 그려질 시간을 보장 (setTimeout)
+ * 2. 와일드카드 주소 스캔: 엄격한 주소 매칭 대신 작품ID가 포함된 모든 유효 링크를 선별 수집하여 누락 차단
+ * 3. 69shuba / novel543 완벽 하이브리드 엔진, UTF-8 BOM 보정, 임시 저장소 대시보드 내장
  */
 
 (function () {
@@ -10,7 +10,7 @@
 
   // --- 사이트 타입 분석 ---
   const hostname = window.location.hostname;
-  let siteType = "69shuba"; // 기본값
+  let siteType = "69shuba"; 
 
   if (hostname.includes("novel543") || hostname.includes("novel543.com")) {
     siteType = "novel543";
@@ -188,7 +188,7 @@
 
         <div style="border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between;">
             <div style="width: 85%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">
-                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V35: 통합 수집기 (${siteType.toUpperCase()})</h3>
+                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V36: 통합 수집기 (${siteType.toUpperCase()})</h3>
             </div>
             <button id="btn-close" style="background:none; border:none; color:#fff; cursor:pointer;">✕</button>
         </div>
@@ -313,120 +313,107 @@
     }
   };
 
-  // --- DB 초기화 및 대시보드 출력 ---
+  // --- DB 초기화 ---
   initDB().then(async () => {
     log("데이터베이스 로드 성공.");
     await refreshDashboard();
   }).catch(e => log(`DB 에러: ${e.message}`));
 
-  // --- [V35 핵심 개정] novel543 상대경로 복구 스캔 엔진 ---
+  // --- [V36 핵심 개정] 광고 스크립트 대응 지연 및 와일드카드 필터링 ---
   const scanEpisodes = async () => {
     document.getElementById('btn-scan').disabled = true;
-    log(`🚀 [${siteType.toUpperCase()}] 목차 정밀 스캔 시작...`);
+    log(`🚀 [${siteType.toUpperCase()}] 목차 데이터 탐색 중... (스크립트 로딩 대기 0.5초)`);
 
-    try {
-      let rawLinks = Array.from(document.querySelectorAll('a'));
-      let parsedLinks = [];
+    // 💡 광고 및 외부 비동기 스크립트가 목차를 안정적으로 그릴 수 있도록 지연 실행 처리
+    setTimeout(async () => {
+      try {
+        let rawLinks = Array.from(document.querySelectorAll('a'));
+        let parsedLinks = [];
 
-      if (siteType === "novel543") {
-        log(`💡 novel543 상대경로 교정 및 정규식 검사...`);
-        
-        const novelId = state.novelKey; // 예: 0918487988
-        // 검사용 정규식: /소설번호/챕터숫자
-        const pathRegex = new RegExp(`^/${novelId}/\\d+(\\.html)?$`);
+        if (siteType === "novel543") {
+          const novelId = state.novelKey; // 예: 0918487988
+          log(`💡 와일드카드 수집 방식 작동 (ID: ${novelId} 연관 링크 전체 추출)`);
 
-        parsedLinks = rawLinks.map((el) => {
-          const text = el.innerText ? el.innerText.trim() : "";
-          let href = el.getAttribute('href') || "";
-          
-          // [핵심 해결책] href 내부에 dir가 교란되거나 오염되어 있으면 경로를 순수하게 재조정합니다.
-          if (href && !href.startsWith('http')) {
-            // 주소가 만약 "0918487988/1.html" 형태로 들어온다면 앞에 슬래시(/)를 강제로 붙여 루트 상대경로로 변환합니다.
-            if (!href.startsWith('/')) {
-              href = '/' + href;
-            }
+          parsedLinks = rawLinks.map((el) => {
+            const text = el.innerText ? el.innerText.trim() : "";
+            let href = el.getAttribute('href') || "";
+            return { text, href };
+          }).filter(link => {
+            if (!link.href) return false;
+            
+            // 작품ID 번호가 주소창 어딘가에 박혀있는지 광범위 검색
+            const hasNovelId = link.href.includes(novelId);
+            
+            // 불필요한 메인 메뉴 노이즈 및 공백 단락 제거
+            const isNoise = link.href.includes("/dir") || link.text.includes("章节列表") || link.text.includes("章節列表") || link.text === "";
+            
+            return hasNovelId && !isNoise;
+          });
+
+        } else {
+          // 69shuba 챕터 탐색
+          parsedLinks = rawLinks.map((el) => {
+            const text = el.innerText ? el.innerText.trim() : "";
+            const href = el.getAttribute('href') || "";
+            return { text, href };
+          }).filter(link => {
+            if (!link.text || !link.href) return false;
+            const blockKeywords = ["书签", "最新章节", "目录", "加入书架", "推荐", "返回", "电脑版", "手机版", "最新", "원문", "完本感言"];
+            const hasBlockWord = blockKeywords.some(word => link.text.includes(word));
+            if (hasBlockWord) return false;
+
+            const isValidHref = link.href.endsWith('.htm') || link.href.endsWith('.html') || /\/txt\/\d+\/\d+/.test(link.href);
+            if (!isValidHref) return false;
+
+            const hasChapterPattern = /第?\s*\d+\s*[章|话|화|回]/g.test(link.text) || link.text.startsWith("第");
+            return hasChapterPattern;
+          });
+        }
+
+        // 절대 경로 변환
+        parsedLinks = parsedLinks.map(link => {
+          if (link.href && !link.href.startsWith('http')) {
+            link.href = new URL(link.href, window.location.origin).href;
           }
-          return { text, href };
-        }).filter(link => {
-          if (!link.href) return false;
-
-          try {
-            // 오염될 수 있는 '/dir' 이 포함된 주소를 배제하고 도메인을 원형 상태로 파싱합니다.
-            const urlObj = new URL(link.href, window.location.origin); // location.href가 아닌 origin 기준으로 상대경로를 교정합니다!
-            const path = urlObj.pathname;
-
-            const isMatch = pathRegex.test(path);
-            const isNoise = link.text.includes("章节列表") || link.text.includes("章節列表") || link.text === "";
-
-            return isMatch && !isNoise;
-          } catch(err) {
-            return false;
-          }
+          return link;
         });
 
-      } else {
-        // 69shuba 챕터 탐색
-        parsedLinks = rawLinks.map((el) => {
-          const text = el.innerText ? el.innerText.trim() : "";
-          const href = el.getAttribute('href') || "";
-          return { text, href };
-        }).filter(link => {
-          if (!link.text || !link.href) return false;
-          const blockKeywords = ["书签", "最新章节", "目录", "加入书架", "推荐", "返回", "电脑版", "手机版", "最新", "원문", "完本感言"];
-          const hasBlockWord = blockKeywords.some(word => link.text.includes(word));
-          if (hasBlockWord) return false;
-
-          const isValidHref = link.href.endsWith('.htm') || link.href.endsWith('.html') || /\/txt\/\d+\/\d+/.test(link.href);
-          if (!isValidHref) return false;
-
-          const hasChapterPattern = /第?\s*\d+\s*[章|话|화|回]/g.test(link.text) || link.text.startsWith("第");
-          return hasChapterPattern;
-        });
-      }
-
-      // 3. 상대경로를 최종적인 원격 절대경로로 완벽하게 보정
-      parsedLinks = parsedLinks.map(link => {
-        if (link.href && !link.href.startsWith('http')) {
-          link.href = new URL(link.href, window.location.origin).href; // origin 기준(버그 원천 차단)
+        // 중복 제거
+        const uniqueLinks = [];
+        const seen = new Set();
+        for (const link of parsedLinks) {
+          if (!seen.has(link.href)) {
+            seen.add(link.href);
+            uniqueLinks.push(link);
+          }
         }
-        return link;
-      });
 
-      // 4. 중복 제거
-      const uniqueLinks = [];
-      const seen = new Set();
-      for (const link of parsedLinks) {
-        if (!seen.has(link.href)) {
-          seen.add(link.href);
-          uniqueLinks.push(link);
+        if (uniqueLinks.length === 0) {
+          throw new Error("소설 목차 링크를 가져오지 못했습니다. 페이지가 다 로딩된 후 다시 버튼을 누르거나 주소를 확인해 주세요.");
         }
+
+        log(`첫 챕터 탐색 성공: ${uniqueLinks[0].text}`);
+        log(`마지막 챕터 탐색 성공: ${uniqueLinks[uniqueLinks.length - 1].text}`);
+
+        state.allLinks = uniqueLinks;
+        document.getElementById('step-setup').style.display = 'none';
+        document.getElementById('step-download').style.display = 'block';
+        document.getElementById('found-count').innerText = state.allLinks.length;
+        document.getElementById('range-end').value = state.allLinks.length;
+
+        // 현재 소설의 DB 수집분량 확인 후 자동 설정
+        const saved = await loadChaptersFromDB(state.novelKey);
+        if (saved.length > 0) {
+          const nextTargetNum = saved.length + 1;
+          document.getElementById('range-start').value = Math.min(nextTargetNum, state.allLinks.length);
+        }
+
+        log(`✅ 스캔 완료! 실제 총 ${state.allLinks.length}화 정렬됨.`);
+      } catch (e) {
+        log(`❌ 오류: ${e.message}`);
+        document.getElementById('btn-scan').disabled = false;
       }
-
-      if (uniqueLinks.length === 0) {
-        throw new Error(`소설 목차 링크가 발견되지 않았습니다.\n현재 페이지 주소창 끝에 '/dir'이 붙은 목차 화면이 맞는지 확인해 주세요.`);
-      }
-
-      log(`첫 챕터 탐색 성공: ${uniqueLinks[0].text}`);
-      log(`마지막 챕터 탐색 성공: ${uniqueLinks[uniqueLinks.length - 1].text}`);
-
-      state.allLinks = uniqueLinks;
-      document.getElementById('step-setup').style.display = 'none';
-      document.getElementById('step-download').style.display = 'block';
-      document.getElementById('found-count').innerText = state.allLinks.length;
-      document.getElementById('range-end').value = state.allLinks.length;
-
-      // 현재 소설의 DB 수집분량 확인 후 자동 설정
-      const saved = await loadChaptersFromDB(state.novelKey);
-      if (saved.length > 0) {
-        const nextTargetNum = saved.length + 1;
-        document.getElementById('range-start').value = Math.min(nextTargetNum, state.allLinks.length);
-      }
-
-      log(`✅ 스캔 완료! 실제 총 ${state.allLinks.length}화 정렬됨.`);
-    } catch (e) {
-      log(`❌ 오류: ${e.message}`);
-      document.getElementById('btn-scan').disabled = false;
-    }
+    }, 500); // 0.5초 대기 후 DOM 파싱 시작
   };
 
   // --- 메인 다운로드 루프 ---
@@ -456,7 +443,6 @@
       const ep = targets[i];
       const displayNum = startIdx + i + 1;
 
-      // 과열 방지 휴식 (40화 단위로 8초 휴식)
       if (i > 0 && i % 40 === 0) {
         log(`☕ 보안 장치 과열 방지 휴식... (8초)`);
         await new Promise((r) => setTimeout(r, 8000));
@@ -479,7 +465,6 @@
           throw new Error('403_BLOCKED');
         }
 
-        // 동적 인코딩 변환
         const buffer = await res.arrayBuffer();
         const contentType = res.headers.get("content-type") || "";
         let encoding = 'utf-8';
@@ -502,7 +487,6 @@
         const doc = new DOMParser().parseFromString(htmlText, 'text/html');
         let contentEl = null;
 
-        // 사이트 구조별 본문 영역 추출 분기
         if (siteType === "novel543") {
           contentEl = doc.querySelector('.content_detail, #content_detail, .read-content, #chapter-content');
         } else {
@@ -576,7 +560,6 @@
     let safeTitle = state.novelTitle.replace(/[\\/:*?"<>|]/g, '_');
     const filename = `${safeTitle} ${startNum}-${endNum}.txt`;
 
-    // UTF-8 BOM 바이너리 강제 삽입 (깨짐 완벽 방지)
     const BOM = new Uint8Array([0xEF, 0xBB, 0xBF]); 
     const blob = new Blob([BOM, compiledText], { type: 'text/plain;charset=utf-8' });
     
