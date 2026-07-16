@@ -1,7 +1,7 @@
-/* * Novel Downloader (V38: Reverse Array Order for novel543)
- * 1. novel543 리스트 역순 정렬 버그 수정: 최신화가 위에 있는 사이트 특성에 맞춰 배열을 강제로 뒤집어(Reverse) 1화부터 순차 수집 유도
- * 2. 2초 렌더링 지연 및 와일드카드 초광대역 수집 탑재
- * 3. 69shuba / novel543 하이브리드 수집 엔진, UTF-8 BOM 보정, 임시 저장소 대시보드 완비
+/* * Novel Downloader (V39: Novel543 Strict Table of Contents Engine)
+ * 1. novel543 상단 노이즈 원천 차단: '최신 업데이트 요약본' 영역을 스킵하고 '全部章节(전체 장)' 영역만 정밀 타겟팅
+ * 2. 공지글(完本感言) 자동 제거 및 순수 1화 ~ 1922화 정방향 순차 정렬 완벽 보정
+ * 3. 69shuba / novel543 지능형 하이브리드 엔진, UTF-8 BOM 보정, 임시 저장소 대시보드 내장
  */
 
 (function () {
@@ -111,7 +111,7 @@
     return `${siteType}_Novel`;
   };
 
-  // --- 本문 텍스트 정제 ---
+  // --- 본문 텍스트 정제 ---
   const cleanText = (text) => {
     text = text
       .replace(/<script[^>]*>([\s\S]*?)<\/script>/gi, '') 
@@ -188,7 +188,7 @@
 
         <div style="border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between;">
             <div style="width: 85%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">
-                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V38: 통합 슈퍼 크롤러 (${siteType.toUpperCase()})</h3>
+                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V39: 통합 슈퍼 크롤러 (${siteType.toUpperCase()})</h3>
             </div>
             <button id="btn-close" style="background:none; border:none; color:#fff; cursor:pointer;">✕</button>
         </div>
@@ -319,19 +319,31 @@
     await refreshDashboard();
   }).catch(e => log(`DB 에러: ${e.message}`));
 
-  // --- 목차 스캔 로직 ---
+  // --- 목차 스캔 로직 (V39 타겟팅 고도화) ---
   const scanEpisodes = async () => {
     document.getElementById('btn-scan').disabled = true;
-    log(`🚀 [${siteType.toUpperCase()}] 목차 스캔 시작... (광고 스크립트 로딩 대기 2.0초)`);
+    log("🚀 목차 스캔을 대기합니다... (광고 로딩 2초)");
 
     setTimeout(async () => {
       try {
-        let rawLinks = Array.from(document.querySelectorAll('a'));
         let parsedLinks = [];
 
         if (siteType === "novel543") {
-          const novelId = state.novelKey; 
-          log(`💡 와일드카드 초광대역 수집기 가동 (ID: ${novelId} 연관 모든 링크 추적)`);
+          log("💡 novel543 '全部章节(전체 장)' 구역 정밀 스캔 가동...");
+          const novelId = state.novelKey;
+
+          // 💡 [핵심 보정 1] 상단 요약본 구역을 피하기 위해, 실제 정규 목차가 담겨있는 하단 리스트 영역을 명확히 추적합니다.
+          // novel543의 전체 장 목록은 주로 '.section-list' 혹은 두 번째로 매칭되는 앵커 컨테이너 내부에 정방향 배치되어 있습니다.
+          let lists = Array.from(document.querySelectorAll('.section-list, .chapter-list, .chapter, .dir-list'));
+          let targetContainer = null;
+          
+          if (lists.length > 0) {
+            // 여러 목록 영역이 포착될 경우, 상단 최신 요약본이 아닌 본 목록인 "가장 마지막 컨테이너" 혹은 특정 요소를 타겟팅합니다.
+            targetContainer = lists[lists.length - 1]; 
+          }
+
+          let scope = targetContainer || document.body;
+          let rawLinks = Array.from(scope.querySelectorAll('a'));
 
           parsedLinks = rawLinks.map((el) => {
             const text = el.innerText ? el.innerText.trim() : "";
@@ -339,16 +351,21 @@
             return { text, href };
           }).filter(link => {
             if (!link.href) return false;
+            
             const hasNovelId = link.href.includes(novelId);
             const isNoise = link.href.endsWith('/dir') || link.href.endsWith('/dir/') || link.text === "";
-            return hasNovelId && !isNoise;
+            
+            // 💡 [핵심 보정 2] 글자가 온전하지 않은 공지글(完本感言)이나 공지사항 단락을 필터링 규칙으로 완전 배제합니다.
+            const hasChapterPattern = /第?\s*\d+\s*[章|话|화|回]/g.test(link.text) || link.text.startsWith("第");
+            
+            return hasNovelId && !isNoise && hasChapterPattern;
           });
 
-          // 💡 [핵심 보정] 최신화가 상단에 배치되는 novel543의 특성에 맞게 배열을 거꾸로 뒤집어(Reverse) 1화부터 정렬합니다.
-          parsedLinks.reverse();
+          // 💡 정방향 목차 구역을 올바르게 잡았으므로, 더 이상 reverse()로 뒤집지 않고 본래 사이트 순서대로(1화->1922화) 마감합니다.
 
         } else {
           // 69shuba 챕터 탐색
+          let rawLinks = Array.from(document.querySelectorAll('a'));
           parsedLinks = rawLinks.map((el) => {
             const text = el.innerText ? el.innerText.trim() : "";
             const href = el.getAttribute('href') || "";
@@ -375,7 +392,7 @@
           return link;
         });
 
-        // 중복 제거
+        // 중복 주소 제거
         const uniqueLinks = [];
         const seen = new Set();
         for (const link of parsedLinks) {
@@ -386,11 +403,11 @@
         }
 
         if (uniqueLinks.length === 0) {
-          throw new Error("소설 목차 링크를 가져오지 못했습니다. 다시 시도해 주세요.");
+          throw new Error("소설 정규 목차 링크를 가져오지 못했습니다.");
         }
 
-        log(`첫 챕터 탐색 성공: ${uniqueLinks[0].text}`);
-        log(`마지막 챕터 탐색 성공: ${uniqueLinks[uniqueLinks.length - 1].text}`);
+        log(`첫 챕터 진입 확인: ${uniqueLinks[0].text}`);
+        log(`마지막 챕터 진입 확인: ${uniqueLinks[uniqueLinks.length - 1].text}`);
 
         state.allLinks = uniqueLinks;
         document.getElementById('step-setup').style.display = 'none';
@@ -398,7 +415,6 @@
         document.getElementById('found-count').innerText = state.allLinks.length;
         document.getElementById('range-end').value = state.allLinks.length;
 
-        // 현재 소설의 DB 수집분량 확인 후 자동 설정
         const saved = await loadChaptersFromDB(state.novelKey);
         if (saved.length > 0) {
           const nextTargetNum = saved.length + 1;
