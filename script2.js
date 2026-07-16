@@ -1,7 +1,7 @@
-/* * Novel Downloader (V37: Nuclear Option Parser for novel543)
- * 1. 2초의 넉넉한 렌더링 지연(setTimeout) 부여하여 TAMedia 광고 스크립트 실행 완벽 대기
- * 2. 원자폭탄급 와일드카드 필터: 정규식/패턴 매칭 전면 폐기. 작품번호(0918487988)만 링크에 붙어있으면 묻지도 따지지도 않고 올-스캔
- * 3. 69shuba / novel543 하이브리드 완벽 대응, UTF-8 BOM 인코딩 교정 및 로컬 저장소 대시보드 내장
+/* * Novel Downloader (V38: Reverse Array Order for novel543)
+ * 1. novel543 리스트 역순 정렬 버그 수정: 최신화가 위에 있는 사이트 특성에 맞춰 배열을 강제로 뒤집어(Reverse) 1화부터 순차 수집 유도
+ * 2. 2초 렌더링 지연 및 와일드카드 초광대역 수집 탑재
+ * 3. 69shuba / novel543 하이브리드 수집 엔진, UTF-8 BOM 보정, 임시 저장소 대시보드 완비
  */
 
 (function () {
@@ -111,7 +111,7 @@
     return `${siteType}_Novel`;
   };
 
-  // --- 본문 텍스트 정제 ---
+  // --- 本문 텍스트 정제 ---
   const cleanText = (text) => {
     text = text
       .replace(/<script[^>]*>([\s\S]*?)<\/script>/gi, '') 
@@ -188,7 +188,7 @@
 
         <div style="border-bottom:1px solid #444; padding-bottom:10px; margin-bottom:15px; display:flex; justify-content:space-between;">
             <div style="width: 85%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">
-                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V37: 통합 슈퍼 크롤러 (${siteType.toUpperCase()})</h3>
+                <h3 style="margin:0; color:#00E676; font-size:14px;">📖 V38: 통합 슈퍼 크롤러 (${siteType.toUpperCase()})</h3>
             </div>
             <button id="btn-close" style="background:none; border:none; color:#fff; cursor:pointer;">✕</button>
         </div>
@@ -319,19 +319,18 @@
     await refreshDashboard();
   }).catch(e => log(`DB 에러: ${e.message}`));
 
-  // --- [V37 핵심 개정] 초광대역 와일드카드 수집 방식 ---
+  // --- 목차 스캔 로직 ---
   const scanEpisodes = async () => {
     document.getElementById('btn-scan').disabled = true;
     log(`🚀 [${siteType.toUpperCase()}] 목차 스캔 시작... (광고 스크립트 로딩 대기 2.0초)`);
 
-    // 광고가 목차 리스트를 완전히 뿌릴 때까지 의도적으로 2초간 넉넉하게 딜레이를 줍니다.
     setTimeout(async () => {
       try {
         let rawLinks = Array.from(document.querySelectorAll('a'));
         let parsedLinks = [];
 
         if (siteType === "novel543") {
-          const novelId = state.novelKey; // 예: 0918487988
+          const novelId = state.novelKey; 
           log(`💡 와일드카드 초광대역 수집기 가동 (ID: ${novelId} 연관 모든 링크 추적)`);
 
           parsedLinks = rawLinks.map((el) => {
@@ -340,14 +339,13 @@
             return { text, href };
           }).filter(link => {
             if (!link.href) return false;
-            
-            // 주소창(href)에 작품번호가 포함되어 있는지 확인
             const hasNovelId = link.href.includes(novelId);
-            // 메인 이동용 무효 링크(/dir) 제거 및 제목이 없는 링크 제거
             const isNoise = link.href.endsWith('/dir') || link.href.endsWith('/dir/') || link.text === "";
-            
             return hasNovelId && !isNoise;
           });
+
+          // 💡 [핵심 보정] 최신화가 상단에 배치되는 novel543의 특성에 맞게 배열을 거꾸로 뒤집어(Reverse) 1화부터 정렬합니다.
+          parsedLinks.reverse();
 
         } else {
           // 69shuba 챕터 탐색
@@ -377,7 +375,7 @@
           return link;
         });
 
-        // 중복 주소 제거
+        // 중복 제거
         const uniqueLinks = [];
         const seen = new Set();
         for (const link of parsedLinks) {
@@ -388,7 +386,7 @@
         }
 
         if (uniqueLinks.length === 0) {
-          throw new Error("소설 목차 링크를 가져오지 못했습니다. 페이지가 완전히 로드된 후 다시 [목차 가져오기]를 눌러보세요.");
+          throw new Error("소설 목차 링크를 가져오지 못했습니다. 다시 시도해 주세요.");
         }
 
         log(`첫 챕터 탐색 성공: ${uniqueLinks[0].text}`);
@@ -412,7 +410,7 @@
         log(`❌ 오류: ${e.message}`);
         document.getElementById('btn-scan').disabled = false;
       }
-    }, 2000); // 2초 대기 후 동적 생성된 a 태그 일괄 스캔
+    }, 2000); 
   };
 
   // --- 메인 다운로드 루프 ---
